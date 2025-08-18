@@ -53,7 +53,7 @@
     "pack:bridge": "cd assets/types/bridge && npm pack --pack-destination ../ && mv ../types-bridge-*.tgz ../bridge.tgz",
     "pack": "npm run pack:bridge && npm pack",
     "prepublishOnly": "npm run build",
-    "capacitor:update:before": "node ./hooks/fetch-libnode.js"
+    "capacitor:update:before": "node --experimental-strip-types ./hooks/fetch-libnode.js"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
@@ -84,6 +84,9 @@
   "swiftlint": "@ionic/swiftlint-config",
   "eslintConfig": {
     "extends": "@ionic/eslint-config/recommended"
+  },
+  "engines": {
+    "node": ">=22.6.0"
   },
   "capacitor": {
     "ios": {
