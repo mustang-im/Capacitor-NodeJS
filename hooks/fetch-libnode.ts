@@ -1,5 +1,5 @@
 /// <reference types="../" />
-import { glob, unlink } from "node:fs/promises";
+import { glob } from "node:fs/promises";
 import path from "node:path";
 import https from "node:https";
 import fs from "node:fs";
