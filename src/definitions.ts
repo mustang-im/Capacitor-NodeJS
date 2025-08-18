@@ -40,9 +40,9 @@ declare module '@capacitor/cli' {
        * Libnode architectures to be included in the APK
        * 
        * @default ["arm", "arm64", "x64"]
-       * @example "arm"
+       * @example ["arm"]
        */
-      androidArchitectures?: Array<'arm' | 'arm64' | 'x64'> | 'arm' | 'arm64' | 'x64';
+      androidArchitectures?: Array<'arm' | 'arm64' | 'x64'>;
     };
   }
 }
