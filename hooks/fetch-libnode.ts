@@ -1,5 +1,5 @@
 /// <reference types="../" />
-import { glob, readdir, rm } from "node:fs/promises";
+import { glob, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import https from "node:https";
 import fs from "node:fs";
@@ -71,7 +71,8 @@ async function setupLib() {
   }
 }
 
-const androidBinDir = path.join(packageDir, "android", "libnode", "bin");
+const androidProject = path.join(packageDir, "android");
+const androidBinDir = path.join(androidProject, "libnode", "bin");
 function libNodesPresent(platform: string, archs: string[]) {
   if (platform == "android") {
     let validArchs = Object.entries(AndroidArch);
@@ -127,6 +128,14 @@ async function extractAsset(zipPath: string, destinationPath: string) {
   fs.unlinkSync(zipPath);
 }
 
+async function configureAndroidBuild() {
+  if (platform != "android") return;
+
+  // @ts-ignore
+  let content = `ANDROID_ABI=${archs.map((a) => AndroidArch[a]).join(",")}\n`;
+  await writeFile(path.join(androidProject, "build.properties"), content);
+}
+
 
 async function main() {
   try {
@@ -141,7 +150,10 @@ async function main() {
     libDir = config?.[`${platform}LibNode`] ?? libDir;
     archs = config?.[`${platform}Architectures`] ?? archs;
 
-    await setupLib();
+    await Promise.all([
+      setupLib(),
+      configureAndroidBuild(),
+    ]);
 
   } catch (ex) {
     console.error(ex);
