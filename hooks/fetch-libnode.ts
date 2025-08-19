@@ -108,7 +108,7 @@ async function main() {
     }
 
     let config: PluginsConfig = await readConfig(path);
-    libDir ??= config.CapacitorNodeJS?.[`${platform}LibNode`];
+    libDir = config.CapacitorNodeJS?.[`${platform}LibNode`] ?? libDir;
 
     await setLibDir();
 
