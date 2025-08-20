@@ -45,7 +45,6 @@ let archs: string[] = platform == 'android' ? Object.keys(AndroidArch) : [];
  */
 async function setupLib() {
   try {
-    // Should more than files because of .gitkeep
     if (!noLibCache && libNodesPresent(platform, archs)) {
       await removeUnusedLibs(platform, archs);
       return;
