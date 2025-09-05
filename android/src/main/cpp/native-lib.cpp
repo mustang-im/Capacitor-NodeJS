@@ -107,6 +107,7 @@ int RunNodeInstance(MultiIsolatePlatform* platform,
     std::vector<std::string> errors;
     std::unique_ptr<CommonEnvironmentSetup> setup =
             CommonEnvironmentSetup::Create(platform, &errors, args, exec_args);
+
     if (!setup) {
         for (const std::string& err : errors)
             fprintf(stderr, "%s: %s\n", args[0].c_str(), err.c_str());
@@ -134,11 +135,11 @@ int RunNodeInstance(MultiIsolatePlatform* platform,
         // load files from the disk, and uses the standard CommonJS file loader
         // instead of the internal-only `require` function.
         MaybeLocal<Value> loadenv_ret = node::LoadEnvironment(
-                nodeENV,
-                "const publicRequire ="
-                "  require('node:module').createRequire(process.cwd() + '/');"
-                "globalThis.require = publicRequire;"
-                "require('node:vm').runInThisContext(process.argv[1]);");
+            nodeENV,
+            [](const node::StartExecutionCallbackInfo &info) {
+                // Run main script with native require or start script execution
+                return info.native_require;
+            });
 
         if (loadenv_ret.IsEmpty())  // There has been a JS exception.
             return 1;
@@ -176,7 +177,7 @@ int RunNodeProcess(int argc, char** argv) {
     // Worker threads. When no `MultiIsolatePlatform` instance is present,
     // Worker threads are disabled.
     std::unique_ptr<MultiIsolatePlatform> platform =
-            MultiIsolatePlatform::Create(4);
+            MultiIsolatePlatform::Create(0);
     V8::InitializePlatform(platform.get());
     V8::Initialize();
 
@@ -292,7 +293,7 @@ Java_net_hampoelz_capacitor_nodejs_NodeProcess_nativeStart(
 }
 
 extern "C" void JNICALL
-Java_net_hampoelz_capacitor_nodejs_NodeProcess_nativeStop(JNIEnv *env, jobject thiz) {
+Java_net_hampoelz_capacitor_nodejs_NodeProcess_nativeStop(JNIEnv *env, jobject /*this*/) {
     node::Stop(nodeENV);
 }
 

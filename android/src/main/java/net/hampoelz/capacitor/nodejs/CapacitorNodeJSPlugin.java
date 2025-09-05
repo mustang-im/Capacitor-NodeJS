@@ -52,11 +52,11 @@ public class CapacitorNodeJSPlugin extends Plugin {
         return settings;
     }
 
-    @Override
-    protected void handleOnResume() {
-        super.handleOnResume();
-        this.load();
-    }
+//    @Override
+//    protected void handleOnResume() {
+//        super.handleOnResume();
+//        this.load();
+//    }
 
     @Override
     protected void handleOnPause() {
@@ -65,24 +65,24 @@ public class CapacitorNodeJSPlugin extends Plugin {
         implementation.stopEngine();
     }
 
-    @Override
-    protected void handleOnStop() {
-        super.handleOnStop();
-        implementation.stopEngine();
-    }
-
-    @Override
-    protected void handleOnDestroy() {
-        super.handleOnDestroy();
-        implementation.stopEngine();
-    }
-
-    @Override
-    protected void handleOnRestart() {
-        super.handleOnRestart();
-        implementation.stopEngine();
-        this.load();
-    }
+//    @Override
+//    protected void handleOnStop() {
+//        super.handleOnStop();
+//        implementation.stopEngine();
+//    }
+//
+//    @Override
+//    protected void handleOnDestroy() {
+//        super.handleOnDestroy();
+//        implementation.stopEngine();
+//    }
+//
+//    @Override
+//    protected void handleOnRestart() {
+//        super.handleOnRestart();
+//        implementation.stopEngine();
+//        this.load();
+//    }
 
     //region PluginMethods
     //---------------------------------------------------------------------------------------
