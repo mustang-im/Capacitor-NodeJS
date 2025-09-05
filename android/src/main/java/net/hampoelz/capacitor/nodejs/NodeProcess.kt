@@ -4,7 +4,13 @@ import android.system.ErrnoException
 import android.system.Os
 import com.getcapacitor.Logger
 
-class NodeProcess protected constructor(private val receiveCallback: ReceiveCallback) {
+class NodeProcess {
+    private val receiveCallback: ReceiveCallback
+
+    constructor(receiveCallback: ReceiveCallback) {
+        this.receiveCallback = receiveCallback
+    }
+
     private external fun nativeStart(
         arguments: Array<String?>?,
         environmentVariables: Array<Array<String?>?>?,
@@ -15,11 +21,11 @@ class NodeProcess protected constructor(private val receiveCallback: ReceiveCall
 
     /** @noinspection unused
      */
-    private fun nativeReceive(channelName: String?, message: String?) {
+    fun nativeReceive(channelName: String?, message: String?) {
         receiveCallback.receive(channelName, message)
     }
 
-    protected fun start(
+    fun start(
         modulePath: String?,
         parameter: Array<String?>,
         env: MutableMap<String?, String?>,
@@ -40,7 +46,7 @@ class NodeProcess protected constructor(private val receiveCallback: ReceiveCall
         arguments[0] = "node"
         arguments[1] = modulePath
 
-        val environmentVariables = Array<Array<String?>?>(env.size) { arrayOfNulls<String>(2) }
+        val environmentVariables = Array<Array<String?>?>(env.size) { arrayOfNulls(2) }
 
         var envCount = 0
         for (entry in env.entries) {
@@ -52,11 +58,11 @@ class NodeProcess protected constructor(private val receiveCallback: ReceiveCall
         nativeStart(arguments, environmentVariables, true)
     }
 
-    protected interface ReceiveCallback {
+    interface ReceiveCallback {
         fun receive(channelName: String?, message: String?)
     }
 
-    protected fun send(channelName: String?, message: String?) {
+    fun send(channelName: String?, message: String?) {
         nativeSend(channelName, message)
     }
 
