@@ -111,10 +111,10 @@ class CapacitorNodeJS(
             val filesPath = context.getFilesDir().getAbsolutePath()
             val cachePath = context.getCacheDir().getAbsolutePath()
 
-            val basePath = FileOperations.CombinePath(filesPath, "nodejs")
-            val projectPath = FileOperations.CombinePath(basePath, "public")
-            val modulesPath = FileOperations.CombinePath(basePath, "builtin_modules")
-            val dataPath = FileOperations.CombinePath(basePath, "data")
+            val basePath = FileOperations.combinePath(filesPath, "nodejs")
+            val projectPath = FileOperations.combinePath(basePath, "public")
+            val modulesPath = FileOperations.combinePath(basePath, "builtin_modules")
+            val dataPath = FileOperations.combinePath(basePath, "data")
 
             val copyNodeProjectSuccess =
                 copyNodeProjectFromAPK(projectDir, projectPath, modulesPath)
@@ -123,12 +123,12 @@ class CapacitorNodeJS(
                 return@Runnable
             }
 
-            if (!FileOperations.ExistsPath(projectPath)) {
+            if (!FileOperations.existsPath(projectPath)) {
                 callWrapper.reject("Unable to access the Node.js project. (No such directory)")
                 return@Runnable
             }
 
-            val createDataDirSuccess = FileOperations.CreateDir(dataPath)
+            val createDataDirSuccess = FileOperations.createDir(dataPath)
             if (!createDataDirSuccess) {
                 Logger.debug(
                     CapacitorNodeJSPlugin.LOGGER_TAG,
@@ -136,15 +136,15 @@ class CapacitorNodeJS(
                 )
             }
 
-            val projectPackageJsonPath = FileOperations.CombinePath(projectPath, "package.json")
+            val projectPackageJsonPath = FileOperations.combinePath(projectPath, "package.json")
 
             var projectMainFile: String? = "index.js"
             if (mainFile != null && !mainFile.isEmpty()) {
                 projectMainFile = mainFile
-            } else if (FileOperations.ExistsPath(projectPackageJsonPath)) {
+            } else if (FileOperations.existsPath(projectPackageJsonPath)) {
                 try {
                     val projectPackageJsonData =
-                        FileOperations.ReadFileFromPath(projectPackageJsonPath)
+                        FileOperations.readFileFromPath(projectPackageJsonPath)
                     val projectPackageJson = JSONObject(projectPackageJsonData)
                     val projectPackageJsonMainFile = projectPackageJson.getString("main")
 
@@ -166,14 +166,14 @@ class CapacitorNodeJS(
                 }
             }
 
-            val projectMainPath = FileOperations.CombinePath(projectPath, projectMainFile)
+            val projectMainPath = FileOperations.combinePath(projectPath, projectMainFile)
 
-            if (!FileOperations.ExistsPath(projectMainPath)) {
+            if (!FileOperations.existsPath(projectMainPath)) {
                 callWrapper.reject("Unable to access main script of the Node.js project. (No such file)")
                 return@Runnable
             }
 
-            val modulesPaths = FileOperations.CombineEnv(projectPath, modulesPath)
+            val modulesPaths = FileOperations.combineEnv(projectPath, modulesPath)
 
             val nodeEnv: MutableMap<String?, String?> = HashMap<String?, String?>()
             nodeEnv.put("DATADIR", dataPath)
@@ -265,21 +265,21 @@ class CapacitorNodeJS(
         projectPath: String?,
         modulesPath: String?
     ): Boolean {
-        val nodeAssetDir = FileOperations.CombinePath("public", projectDir)
-        val modulesAssetDir = FileOperations.CombinePath("builtin_modules")
+        val nodeAssetDir = FileOperations.combinePath("public", projectDir)
+        val modulesAssetDir = FileOperations.combinePath("builtin_modules")
         val assetManager = context.getAssets()
 
         var success = true
-        if (FileOperations.ExistsPath(projectPath) && this.isAppUpdated) {
-            success = FileOperations.DeleteDir(projectPath)
+        if (FileOperations.existsPath(projectPath) && this.isAppUpdated) {
+            success = FileOperations.deleteDir(projectPath)
         }
-        success = success and FileOperations.CopyAssetDir(assetManager, nodeAssetDir, projectPath)
+        success = success and FileOperations.copyAssetDir(assetManager, nodeAssetDir, projectPath)
 
-        if (FileOperations.ExistsPath(modulesPath) && this.isAppUpdated) {
-            success = FileOperations.DeleteDir(modulesPath)
+        if (FileOperations.existsPath(modulesPath) && this.isAppUpdated) {
+            success = FileOperations.deleteDir(modulesPath)
         }
         success =
-            success and FileOperations.CopyAssetDir(assetManager, modulesAssetDir, modulesPath)
+            success and FileOperations.copyAssetDir(assetManager, modulesAssetDir, modulesPath)
 
         saveAppUpdateTime()
         return success

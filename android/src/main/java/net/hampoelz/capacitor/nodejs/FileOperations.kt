@@ -11,22 +11,22 @@ import java.io.InputStream
 import java.io.OutputStream
 
 object FileOperations {
-    fun ExistsPath(path: String): Boolean {
+    fun existsPath(path: String): Boolean {
         val file = File(path)
         return file.exists()
     }
 
-    fun CombinePath(vararg paths: String?): String {
+    fun combinePath(vararg paths: String): String {
         var file = File(paths[0])
 
         for (index in 1..<paths.size) {
             file = File(file, paths[index])
         }
 
-        return file.getPath()
+        return file.path
     }
 
-    fun CombineEnv(vararg variables: String?): String {
+    fun combineEnv(vararg variables: String?): String {
         val builder = StringBuilder()
 
         for (index in variables.indices) {
@@ -46,7 +46,7 @@ object FileOperations {
     }
 
     @Throws(IOException::class)
-    fun ReadFileFromPath(path: String): String {
+    fun readFileFromPath(path: String): String {
         val file = File(path)
 
         val builder = StringBuilder()
@@ -63,18 +63,18 @@ object FileOperations {
         return builder.toString()
     }
 
-    fun CreateDir(dirPath: String): Boolean {
+    fun createDir(dirPath: String): Boolean {
         val directory = File(dirPath)
         if (directory.exists()) return true
         return directory.mkdirs()
     }
 
-    fun DeleteDir(dirPath: String): Boolean {
+    fun deleteDir(dirPath: String): Boolean {
         val directory = File(dirPath)
-        return DeleteDir(directory)
+        return deleteDir(directory)
     }
 
-    fun DeleteDir(directory: File): Boolean {
+    fun deleteDir(directory: File): Boolean {
         if (!directory.exists()) return true
 
         val files = directory.listFiles()
@@ -82,10 +82,10 @@ object FileOperations {
 
         if (files != null) {
             for (file in files) {
-                if (file.isDirectory()) {
-                    success = success and DeleteDir(file)
+                success = if (file.isDirectory()) {
+                    success and deleteDir(file)
                 } else {
-                    success = success and file.delete()
+                    success and file.delete()
                 }
             }
         }
@@ -94,7 +94,7 @@ object FileOperations {
         return success
     }
 
-    fun CopyAssetDir(
+    fun copyAssetDir(
         assetManager: AssetManager,
         assetPath: String,
         destinationPath: String
@@ -106,15 +106,15 @@ object FileOperations {
             var success = true
 
             if (files.size == 0) {
-                success = CopyAsset(assetManager, assetPath, destinationPath)
+                success = copyAsset(assetManager, assetPath, destinationPath)
             } else {
-                CreateDir(destinationPath)
+                createDir(destinationPath)
 
                 for (file in files) {
-                    success = success and CopyAssetDir(
+                    success = success and copyAssetDir(
                         assetManager,
-                        CombinePath(assetPath, file),
-                        CombinePath(destinationPath, file)
+                        combinePath(assetPath, file),
+                        combinePath(destinationPath, file)
                     )
                 }
             }
@@ -123,14 +123,14 @@ object FileOperations {
         } catch (e: IOException) {
             Logger.error(
                 CapacitorNodeJSPlugin.LOGGER_TAG,
-                "Failed to copy assets from '" + assetPath + "'.",
+                "Failed to copy assets from '$assetPath'.",
                 e
             )
             return false
         }
     }
 
-    fun CopyAsset(assetManager: AssetManager, assetPath: String, destinationPath: String): Boolean {
+    fun copyAsset(assetManager: AssetManager, assetPath: String, destinationPath: String): Boolean {
         try {
             val destinationFile = File(destinationPath)
 
@@ -139,7 +139,7 @@ object FileOperations {
             val `in` = assetManager.open(assetPath)
             val out: OutputStream = FileOutputStream(destinationPath)
 
-            CopyStream(`in`, out)
+            copyStream(`in`, out)
 
             `in`.close()
             out.flush()
@@ -149,7 +149,7 @@ object FileOperations {
         } catch (e: Exception) {
             Logger.error(
                 CapacitorNodeJSPlugin.LOGGER_TAG,
-                "Failed to copy the asset '" + assetPath + "' to '" + destinationPath + "'.",
+                "Failed to copy the asset '$assetPath' to '$destinationPath'.",
                 e
             )
             return false
@@ -157,7 +157,7 @@ object FileOperations {
     }
 
     @Throws(IOException::class)
-    fun CopyStream(`in`: InputStream, out: OutputStream) {
+    fun copyStream(`in`: InputStream, out: OutputStream) {
         val buffer = ByteArray(1024)
 
         var size: Int
