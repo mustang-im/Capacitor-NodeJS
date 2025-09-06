@@ -73,9 +73,9 @@ class CapacitorNodeJS {
 
     fun startEngine(
         call: PluginCall?,
-        projectDir: String,
-        mainFile: String,
-        args: Array<String>,
+        projectDir: String?,
+        mainFile: String?,
+        args: Array<String?>,
         env: MutableMap<String?, String?>
     ) {
         val callWrapper = object {
@@ -138,7 +138,7 @@ class CapacitorNodeJS {
             val projectPackageJsonPath = FileOperations.combinePath("package.json")
 
             var projectMainFile = "index.js"
-            if (!mainFile.isEmpty()) {
+            if (mainFile != null && !mainFile.isEmpty()) {
                 projectMainFile = mainFile
             } else if (FileOperations.existsPath(projectPackageJsonPath)) {
                 try {
@@ -260,7 +260,7 @@ class CapacitorNodeJS {
     }
 
     private fun copyNodeProjectFromAPK(
-        projectDir: String,
+        projectDir: String?,
         projectPath: String,
         modulesPath: String
     ): Boolean {

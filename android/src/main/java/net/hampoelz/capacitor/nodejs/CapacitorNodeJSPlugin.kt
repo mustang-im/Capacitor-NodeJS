@@ -11,7 +11,7 @@ import org.json.JSONException
 @CapacitorPlugin(name = "CapacitorNodeJS")
 class CapacitorNodeJSPlugin : Plugin() {
     private val eventNotifier = PluginEventNotifier()
-    private var implementation: CapacitorNodeJS? = null
+    private lateinit var implementation: CapacitorNodeJS
 
     override fun load() {
         val context = getContext()
@@ -19,7 +19,7 @@ class CapacitorNodeJSPlugin : Plugin() {
 
         val pluginSettings = readPluginSettings()
         if (pluginSettings.startMode == "auto") {
-            implementation!!.startEngine(
+            implementation.startEngine(
                 null,
                 pluginSettings.nodeDir,
                 null,
@@ -48,12 +48,12 @@ class CapacitorNodeJSPlugin : Plugin() {
 
     protected override fun handleOnResume() {
         super.handleOnResume()
-        implementation!!.sendMessage(CHANNEL_NAME_APP, "resume", JSArray())
+        implementation.sendMessage(CHANNEL_NAME_APP, "resume", JSArray())
     }
 
     protected override fun handleOnPause() {
         super.handleOnPause()
-        implementation!!.sendMessage(CHANNEL_NAME_APP, "pause", JSArray())
+        implementation.sendMessage(CHANNEL_NAME_APP, "pause", JSArray())
     }
 
     //region PluginMethods
@@ -101,7 +101,7 @@ class CapacitorNodeJSPlugin : Plugin() {
             }
         }
 
-        implementation!!.startEngine(call, projectDir, nodeMain, nodeArgsArray, nodeEnvMap)
+        implementation.startEngine(call, projectDir, nodeMain, nodeArgsArray, nodeEnvMap)
     }
 
     @PluginMethod
@@ -112,12 +112,12 @@ class CapacitorNodeJSPlugin : Plugin() {
             return
         }
 
-        implementation!!.sendMessage(call)
+        implementation.sendMessage(call)
     }
 
     @PluginMethod
     fun whenReady(call: PluginCall) {
-        implementation!!.resolveWhenReady(call)
+        implementation.resolveWhenReady(call)
     }
 
     //---------------------------------------------------------------------------------------

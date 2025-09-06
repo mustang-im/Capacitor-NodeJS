@@ -16,7 +16,7 @@ object FileOperations {
         return file.exists()
     }
 
-    fun combinePath(vararg paths: String): String {
+    fun combinePath(vararg paths: String?): String {
         var file = File(paths[0])
 
         for (index in 1..<paths.size) {
