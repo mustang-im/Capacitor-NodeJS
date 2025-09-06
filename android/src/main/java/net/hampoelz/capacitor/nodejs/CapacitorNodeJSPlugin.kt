@@ -54,6 +54,7 @@ class CapacitorNodeJSPlugin : Plugin() {
     protected override fun handleOnPause() {
         super.handleOnPause()
         implementation.sendMessage(CHANNEL_NAME_APP, "pause", JSArray())
+        implementation.stopEngine()
     }
 
     //region PluginMethods

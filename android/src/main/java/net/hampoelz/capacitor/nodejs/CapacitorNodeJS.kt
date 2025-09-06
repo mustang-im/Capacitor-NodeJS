@@ -13,6 +13,15 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import androidx.core.content.edit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CapacitorNodeJS {
     private lateinit var packageInfo: PackageInfo
@@ -21,6 +30,8 @@ class CapacitorNodeJS {
     private val preferences: SharedPreferences
     private val engineStatus = EngineStatus()
     private val nodeProcess = NodeProcess(this.ReceiveCallback())
+
+    private val coroutineScope = CoroutineScope(Dispatchers.IO)
 
     constructor(context: Context, eventNotifier: PluginEventNotifier) {
         this.context = context
@@ -71,6 +82,7 @@ class CapacitorNodeJS {
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     fun startEngine(
         call: PluginCall?,
         projectDir: String?,
@@ -106,7 +118,7 @@ class CapacitorNodeJS {
         }
         engineStatus.setStarted()
 
-        val engine = Thread(Runnable {
+        coroutineScope.launch withContext@{
             val filesPath = context.filesDir.absolutePath
             val cachePath = context.cacheDir.absolutePath
 
@@ -119,12 +131,12 @@ class CapacitorNodeJS {
                 copyNodeProjectFromAPK(projectDir, projectPath, modulesPath)
             if (!copyNodeProjectSuccess) {
                 callWrapper.reject("Unable to copy the Node.js project from APK.")
-                return@Runnable
+                return@withContext
             }
 
             if (!FileOperations.existsPath(projectPath)) {
                 callWrapper.reject("Unable to access the Node.js project. (No such directory)")
-                return@Runnable
+                return@withContext
             }
 
             val createDataDirSuccess = FileOperations.createDir(dataPath)
@@ -135,7 +147,7 @@ class CapacitorNodeJS {
                 )
             }
 
-            val projectPackageJsonPath = FileOperations.combinePath("package.json")
+            val projectPackageJsonPath = FileOperations.combinePath(projectPath, "package.json")
 
             var projectMainFile = "index.js"
             if (mainFile != null && !mainFile.isEmpty()) {
@@ -155,13 +167,13 @@ class CapacitorNodeJS {
                         "Failed to read the package.json file of the Node.js project.",
                         e
                     )
-                    return@Runnable
+                    return@withContext
                 } catch (e: IOException) {
                     callWrapper.reject(
                         "Failed to read the package.json file of the Node.js project.",
                         e
                     )
-                    return@Runnable
+                    return@withContext
                 }
             }
 
@@ -169,7 +181,7 @@ class CapacitorNodeJS {
 
             if (!FileOperations.existsPath(projectMainPath)) {
                 callWrapper.reject("Unable to access main script of the Node.js project. (No such file)")
-                return@Runnable
+                return@withContext
             }
 
             val modulesPaths = FileOperations.combineEnv(projectPath, modulesPath)
@@ -181,9 +193,13 @@ class CapacitorNodeJS {
 
             nodeProcess.start(projectMainPath, args, nodeEnv, cachePath)
             callWrapper.resolve()
-        })
 
-        engine.start()
+            ensureActive()
+        }
+    }
+
+    fun stopEngine() {
+        coroutineScope.cancel()
     }
 
     fun resolveWhenReady(call: PluginCall) {
