@@ -52,17 +52,37 @@ public class CapacitorNodeJSPlugin extends Plugin {
         return settings;
     }
 
-    @Override
-    protected void handleOnResume() {
-        super.handleOnResume();
-        implementation.sendMessage(CapacitorNodeJSPlugin.CHANNEL_NAME_APP, "resume", new JSArray());
-    }
+//    @Override
+//    protected void handleOnResume() {
+//        super.handleOnResume();
+//        this.load();
+//    }
 
     @Override
     protected void handleOnPause() {
         super.handleOnPause();
         implementation.sendMessage(CapacitorNodeJSPlugin.CHANNEL_NAME_APP, "pause", new JSArray());
+        implementation.stopEngine();
     }
+
+//    @Override
+//    protected void handleOnStop() {
+//        super.handleOnStop();
+//        implementation.stopEngine();
+//    }
+//
+//    @Override
+//    protected void handleOnDestroy() {
+//        super.handleOnDestroy();
+//        implementation.stopEngine();
+//    }
+//
+//    @Override
+//    protected void handleOnRestart() {
+//        super.handleOnRestart();
+//        implementation.stopEngine();
+//        this.load();
+//    }
 
     //region PluginMethods
     //---------------------------------------------------------------------------------------
