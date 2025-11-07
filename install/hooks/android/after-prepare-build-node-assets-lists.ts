@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+// @ts-ignore - loadConfig is not exported in types but exists in the package
+import { loadConfig } from '@capacitor/cli/dist/config.js';
 
 var fileList: string[] = [];
 var dirList: string[] = [];
@@ -24,29 +26,63 @@ function enumFolder(folderPath: string) {
   }
 }
 
-async function createFileAndFolderLists(context: any) {
-  try {
-    var cordovaLib = context.requireCordovaModule('cordova-lib');
-    var platformAPI = cordovaLib.cordova_platforms.getPlatformApi('android');
-    var nodeJsProjectRoot = 'www/nodejs-project';
+// Gets the Android assets path using Capacitor config.
+async function getAndroidAssetsPath(): Promise<string> {
+  const config = await loadConfig();
+  const androidConfig = config.android;
+  if (androidConfig?.webDirAbs) {
     // The Android application's assets path will be the parent of the application's www folder.
-    var androidAssetsPath = path.join(platformAPI.locations.www,'..');
-    var fileListPath = path.join(androidAssetsPath,'file.list');
-    var dirListPath = path.join(androidAssetsPath,'dir.list');
+    return path.join(androidConfig.webDirAbs, '..');
+  }
+  // Fallback to standard Capacitor Android structure
+  return path.join(config.app.rootDir, 'android', 'app', 'src', 'main', 'assets');
+}
 
+async function createFileAndFolderLists() {
+  try {
+    const config = await loadConfig();
+    const androidAssetsPath = await getAndroidAssetsPath();
+    
+    // Get the nodeDir from plugin config (defaults to "nodejs")
+    const pluginConfig = config.app.extConfig.plugins?.CapacitorNodeJS;
+    const nodeDir = pluginConfig?.nodeDir || 'nodejs';
+    
+    // The nodejs project is in the public folder (which is the webDir)
+    const androidConfig = config.android;
+    const wwwPath = androidConfig?.webDirAbs || path.join(config.app.rootDir, 'android', 'app', 'src', 'main', 'assets', 'public');
+    const nodeJsProjectRoot = path.join(wwwPath, nodeDir);
+    
+    // Ensure the directory exists
+    if (!fs.existsSync(nodeJsProjectRoot)) {
+      return;
+    }
+    
+    var fileListPath = path.join(androidAssetsPath, 'file.list');
+    var dirListPath = path.join(androidAssetsPath, 'dir.list');
+
+    // Reset lists
+    fileList = [];
+    dirList = [];
+    
+    // Calculate relative paths from the nodeJsProjectRoot
     enumFolder(nodeJsProjectRoot);
-    fs.writeFileSync(fileListPath, fileList.join('\n'));
-    fs.writeFileSync(dirListPath, dirList.join('\n'));
+    
+    // Convert absolute paths to relative paths
+    const relativeFileList = fileList.map(filePath => path.relative(nodeJsProjectRoot, filePath));
+    const relativeDirList = dirList.map(dirPath => path.relative(nodeJsProjectRoot, dirPath));
+    
+    fs.writeFileSync(fileListPath, relativeFileList.join('\n'));
+    fs.writeFileSync(dirListPath, relativeDirList.join('\n'));
   } catch (err) {
     console.log(err);
     throw err;
   }
 }
 
-export default async function(context: any) {
-  if (context.opts.platforms.indexOf('android') < 0) {
-    return;
+export default async function() {
+  // Only run for Android platform
+  const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
+  if (platformEnv === 'android' || !platformEnv) {
+    await createFileAndFolderLists();
   }
-
-  await createFileAndFolderLists(context);
 }

@@ -46,11 +46,14 @@
     "build-bridge": "tsc --project bridge/tsconfig.json && rollup -c bridge/rollup.config.mjs && rimraf ./bridge/build",
     "build-electron": "tsc --project electron/tsconfig.json && rollup -c electron/rollup.config.mjs && rimraf ./electron/build",
     "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs && npm run build-electron && npm run build-bridge",
+    "build:hooks": "cd install/hooks && npm run build",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
     "pack:bridge": "cd assets/types/bridge && npm pack --pack-destination ../ && mv ../types-bridge-*.tgz ../bridge.tgz",
     "pack": "npm run pack:bridge && npm pack",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "capacitor:sync:after": "node install/hooks/dist/after-prepare-native-modules-preference.js && node install/hooks/dist/after-prepare-patch-npm-packages.js && node install/hooks/dist/after-prepare-build-node-assets-lists.js && node install/hooks/dist/after-prepare-create-macOS-builder-helper.js",
+    "capacitor:copy:after": "node install/hooks/dist/after-prepare-native-modules-preference.js && node install/hooks/dist/after-prepare-patch-npm-packages.js && node install/hooks/dist/after-prepare-build-node-assets-lists.js && node install/hooks/dist/after-prepare-create-macOS-builder-helper.js"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",

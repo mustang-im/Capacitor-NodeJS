@@ -12,6 +12,7 @@
     "fetch-libnode": "node --experimental-strip-types ./fetch-libnode.js"
   },
   "dependencies": {
+    "@capacitor/cli": "^7.0.0",
     "adm-zip": "^0.5.16",
     "glob": "^11.0.3"
   },

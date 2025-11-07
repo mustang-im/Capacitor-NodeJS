@@ -1,39 +1,42 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+// @ts-ignore - loadConfig is not exported in types but exists in the package
+import { loadConfig } from '@capacitor/cli/dist/config.js';
 
-// Gets the platform's www path.
-async function getPlatformWWWPath(context: any, platform: string) {
-  const platformPath = path.join(context.opts.projectRoot, 'platforms', platform);
-  const apiPath = path.join(platformPath, 'cordova', 'Api');
-  const platformAPIModule = await import(pathToFileURL(apiPath).href);
-  const platformAPI = platformAPIModule.default || platformAPIModule;
-  let platformAPIInstance;
-  try {
-    platformAPIInstance = new platformAPI();
-  } catch (e) {
-    platformAPIInstance = new platformAPI(platform, platformPath);
+// Gets the Android www path using Capacitor config.
+async function getAndroidWWWPath(): Promise<string> {
+  const config = await loadConfig();
+  const androidConfig = config.android;
+  if (androidConfig?.webDirAbs) {
+    return androidConfig.webDirAbs;
   }
-  return platformAPIInstance.locations.www;
+  // Fallback to standard Capacitor Android structure
+  return path.join(config.app.rootDir, 'android', 'app', 'src', 'main', 'assets', 'public');
 }
 
 // Adds a helper script to run "npm rebuild" with the current PATH.
 // This workaround is needed for Android Studio on macOS when it is not started
 // from the command line, as npm probably won't be in the PATH at build time.
-async function buildMacOSHelperNpmBuildScript(context: any, platform: string) {
-  var wwwPath = await getPlatformWWWPath(context, platform);
-  var helperMacOSBuildScriptPath = path.join(wwwPath, 'build-native-modules-MacOS-helper-script.sh');
-  fs.writeFileSync( helperMacOSBuildScriptPath,`#!/bin/bash
-    export PATH=$PATH:${process.env.PATH}
-    npm $@
-  `, {"mode": 0o755}
-  );
+async function buildMacOSHelperNpmBuildScript() {
+  const wwwPath = await getAndroidWWWPath();
+  const helperMacOSBuildScriptPath = path.join(wwwPath, 'build-native-modules-MacOS-helper-script.sh');
+  
+  // Ensure the directory exists
+  const dir = path.dirname(helperMacOSBuildScriptPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  
+  fs.writeFileSync(helperMacOSBuildScriptPath, `#!/bin/bash
+export PATH=$PATH:${process.env.PATH}
+npm $@
+`, { mode: 0o755 });
 }
 
-export default async function(context: any) {
-  if (context.opts.platforms.indexOf('android') >= 0) {
-    if (process.platform === 'darwin') {
-      await buildMacOSHelperNpmBuildScript(context, 'android');
-    }
+export default async function() {
+  // Only run for Android platform on macOS
+  const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
+  if ((platformEnv === 'android' || !platformEnv) && process.platform === 'darwin') {
+    await buildMacOSHelperNpmBuildScript();
   }
 }

@@ -1,37 +1,62 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+// @ts-ignore - loadConfig is not exported in types but exists in the package
+import { loadConfig } from '@capacitor/cli/dist/config.js';
 
-// Gets the platform's www path.
-async function getPlatformWWWPath(context: any, platform: string) {
-  const platformPath = path.join(context.opts.projectRoot, 'platforms', platform);
-  const apiPath = path.join(platformPath, 'cordova', 'Api');
-  const platformAPIModule = await import(pathToFileURL(apiPath).href);
-  const platformAPI = platformAPIModule.default || platformAPIModule;
-  let platformAPIInstance;
-  try {
-    platformAPIInstance = new platformAPI();
-  } catch (e) {
-    platformAPIInstance = new platformAPI(platform, platformPath);
+// Gets the platform's www path using Capacitor config.
+async function getPlatformWWWPath(platform: string): Promise<string> {
+  const config = await loadConfig();
+  const rootDir = config.app.rootDir;
+  
+  if (platform === 'android') {
+    // For Android, the www folder is typically at android/app/src/main/assets/public
+    // But we check the actual config structure
+    const androidConfig = config.android;
+    if (androidConfig?.webDirAbs) {
+      return androidConfig.webDirAbs;
+    }
+    // Fallback to standard Capacitor Android structure
+    return path.join(rootDir, 'android', 'app', 'src', 'main', 'assets', 'public');
+  } else if (platform === 'ios') {
+    // For iOS, the www folder is typically at ios/App/App/public
+    const iosConfig = config.ios;
+    if (iosConfig?.webDirAbs) {
+      // webDirAbs is a lazy getter, so we need to await it
+      return await iosConfig.webDirAbs;
+    }
+    // Fallback to standard Capacitor iOS structure
+    return path.join(rootDir, 'ios', 'App', 'App', 'public');
   }
-  return platformAPIInstance.locations.www;
+  
+  // Fallback to webDir from config
+  return config.app.webDirAbs;
 }
 
 // Adds a file to save the contents of the NODEJS_MOBILE_BUILD_NATIVE_MODULES
 // environment variable if it is set during the prepare step.
-async function saveBuildNativeModulesPreference(context: any, platform: string) {
-  var wwwPath = await getPlatformWWWPath(context, platform);
-  var saveBuildNativeModulesPreferencePath = path.join(wwwPath, 'NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt');
+async function saveBuildNativeModulesPreference(platform: string) {
+  const wwwPath = await getPlatformWWWPath(platform);
+  const saveBuildNativeModulesPreferencePath = path.join(wwwPath, 'NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt');
+  
   if (process.env.NODEJS_MOBILE_BUILD_NATIVE_MODULES !== undefined) {
+    // Ensure the directory exists
+    const dir = path.dirname(saveBuildNativeModulesPreferencePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(saveBuildNativeModulesPreferencePath, process.env.NODEJS_MOBILE_BUILD_NATIVE_MODULES);
   }
 }
 
-export default async function(context: any) {
-  if (context.opts.platforms.indexOf('android') >= 0) {
-    await saveBuildNativeModulesPreference(context, 'android');
+export default async function() {
+  // Get platforms from environment variable or process all
+  const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
+  
+  if (platformEnv === 'android' || !platformEnv) {
+    await saveBuildNativeModulesPreference('android');
   }
-  if (context.opts.platforms.indexOf('ios') >= 0) {
-    await saveBuildNativeModulesPreference(context, 'ios');
+  
+  if (platformEnv === 'ios' || !platformEnv) {
+    await saveBuildNativeModulesPreference('ios');
   }
 }

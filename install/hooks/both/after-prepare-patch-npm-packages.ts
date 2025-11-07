@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+// @ts-ignore - loadConfig is not exported in types but exists in the package
+import { loadConfig } from '@capacitor/cli/dist/config.js';
 
 // Patches a package.json in case it has variable substitution for
 // the module's binary at runtime. Since we are cross-compiling
@@ -48,30 +49,53 @@ function visitPackageJSON(folderPath: string) {
   }
 }
 
-// Applies the patch to the selected platform
-async function patchTargetPlatform(context: any, platform: string) {
-  const platformPath = path.join(context.opts.projectRoot, 'platforms', platform);
-  const apiPath = path.join(platformPath, 'cordova', 'Api');
-  const platformAPIModule = await import(pathToFileURL(apiPath).href);
-  const platformAPI = platformAPIModule.default || platformAPIModule;
-  let platformAPIInstance;
-  try {
-    platformAPIInstance = new platformAPI();
-  } catch (e) {
-    platformAPIInstance = new platformAPI(platform, platformPath);
+// Gets the platform's www path using Capacitor config.
+async function getPlatformWWWPath(platform: string, config: any): Promise<string> {
+  if (platform === 'android') {
+    const androidConfig = config.android;
+    if (androidConfig?.webDirAbs) {
+      return androidConfig.webDirAbs;
+    }
+    // Fallback to standard Capacitor Android structure
+    return path.join(config.app.rootDir, 'android', 'app', 'src', 'main', 'assets', 'public');
+  } else if (platform === 'ios') {
+    const iosConfig = config.ios;
+    if (iosConfig?.webDirAbs) {
+      // webDirAbs is a lazy getter, so we need to await it
+      return await iosConfig.webDirAbs;
+    }
+    // Fallback to standard Capacitor iOS structure
+    return path.join(config.app.rootDir, 'ios', 'App', 'App', 'public');
   }
-  const wwwPath = platformAPIInstance.locations.www;
-  const nodeModulesPathToPatch = path.join(wwwPath, 'nodejs-project', 'node_modules');
+  
+  // Fallback to webDir from config
+  return config.app.webDirAbs;
+}
+
+// Applies the patch to the selected platform
+async function patchTargetPlatform(platform: string) {
+  const config = await loadConfig();
+  const wwwPath = await getPlatformWWWPath(platform, config);
+  
+  // Get the nodeDir from plugin config (defaults to "nodejs")
+  const pluginConfig = config.app.extConfig.plugins?.CapacitorNodeJS;
+  const nodeDir = pluginConfig?.nodeDir || 'nodejs';
+  
+  const nodeModulesPathToPatch = path.join(wwwPath, nodeDir, 'node_modules');
   if (fs.existsSync(nodeModulesPathToPatch)) {
     visitPackageJSON(nodeModulesPathToPatch);
   }
 }
 
-export default async function(context: any) {
-  if (context.opts.platforms.indexOf('android') >= 0) {
-    await patchTargetPlatform(context, 'android');
+export default async function() {
+  // Get platforms from environment variable or process all
+  const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
+  
+  if (platformEnv === 'android' || !platformEnv) {
+    await patchTargetPlatform('android');
   }
-  if (context.opts.platforms.indexOf('ios') >= 0) {
-    await patchTargetPlatform(context, 'ios');
+  
+  if (platformEnv === 'ios' || !platformEnv) {
+    await patchTargetPlatform('ios');
   }
 }
