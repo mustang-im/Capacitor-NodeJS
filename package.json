@@ -45,7 +45,7 @@
     "docgen": "docgen --api NodeJSInterface --output-readme README.md --output-json dist/docs.json",
     "build-bridge": "tsc --project bridge/tsconfig.json && rollup -c bridge/rollup.config.mjs && rimraf ./bridge/build",
     "build-electron": "tsc --project electron/tsconfig.json && rollup -c electron/rollup.config.mjs && rimraf ./electron/build",
-    "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs && npm run build-electron && npm run build-bridge",
+    "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs && npm run build-electron && npm run build-bridge && npm run build:hooks",
     "build:hooks": "cd install/hooks && npm run build",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
