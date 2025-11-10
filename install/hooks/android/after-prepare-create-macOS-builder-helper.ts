@@ -34,7 +34,7 @@ npm $@
 `, { mode: 0o755 });
 }
 
-export default async function(): Promise<void> {
+async function main() {
   // Only run for Android platform on macOS
   const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
   if ((platformEnv === 'android' || !platformEnv) && process.platform === 'darwin') {
@@ -42,3 +42,5 @@ export default async function(): Promise<void> {
     await buildMacOSHelperNpmBuildScript(config);
   }
 }
+
+main();

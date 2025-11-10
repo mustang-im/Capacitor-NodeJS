@@ -47,7 +47,7 @@ async function saveBuildNativeModulesPreference(platform: string, config: any): 
   }
 }
 
-export default async function(): Promise<void> {
+async function main() {
   // Get platforms from environment variable or process all
   const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
   
@@ -66,3 +66,5 @@ export default async function(): Promise<void> {
   
   await Promise.all(tasks);
 }
+
+main();

@@ -79,10 +79,12 @@ async function createFileAndFolderLists() {
   }
 }
 
-export default async function() {
+async function main() {
   // Only run for Android platform
   const platformEnv = process.env.CAPACITOR_PLATFORM_NAME;
   if (platformEnv === 'android' || !platformEnv) {
     await createFileAndFolderLists();
   }
 }
+
+main();
