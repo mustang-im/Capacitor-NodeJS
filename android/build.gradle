@@ -265,6 +265,8 @@ import org.gradle.util.GradleVersion
                 // Symlinks to binaries are resolved by Capacitor sync and Gradle during the copy, causing build time errors.
                 // The original project's .bin folder will be added to the path while building in the BuildNpmModules tasks.
                 exclude "**/.bin"
+                // Exclude prebuilt binaries for other platforms (macOS, Linux, Windows) - not needed for Android
+                exclude "**/prebuilds/**"
 
                 inputs.files fileTree(dir: nodeDirPath).exclude { details ->
                     // We shouldn't need to rebuild native code if there are only changes in the Node.js project javascript files.
@@ -399,6 +401,8 @@ import org.gradle.util.GradleVersion
                 into "${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/"
                 includeEmptyDirs = false
                 include '**/*.node'
+                // Exclude prebuilt binaries for other platforms (macOS, Linux, Windows) - not needed for Android
+                exclude '**/prebuilds/**'
             }
 
             tasks.register("GenerateNodeNativeAssetsLists${abiName}") {
@@ -458,12 +462,15 @@ import org.gradle.util.GradleVersion
                 }
 
                 def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/node_modules")
-                def targetDir = file("${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/node_modules")
+                def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/node_modules"
+                def targetDir = file(targetDirPath)
 
                 from sourceDir
                 into targetDir
                 include "**/*.node"
                 includeEmptyDirs = false
+                // Exclude prebuilt binaries for other platforms (macOS, Linux, Windows) - not needed for Android
+                exclude "**/prebuilds/**"
 
                 // Replace existing .node files (whether macOS, Linux, or Windows versions)
                 // Works on both macOS and Linux build systems
@@ -480,6 +487,36 @@ import org.gradle.util.GradleVersion
                 // For AABs, Google Play splits per device architecture, so each device gets the correct ABI
                 onlyIf {
                     sourceDir.exists() && abiName == 'arm64-v8a'
+                }
+
+                // Clean up prebuilds directories after copying Android-built files
+                // This removes unused prebuilt binaries for other platforms (macOS, Linux, Windows)
+                doLast {
+                    def targetDirFile = new File(targetDirPath)
+                    if (targetDirFile.exists()) {
+                        def prebuildsDirs = []
+                        // Use Java File API for configuration cache compatibility
+                        // Define closure with forward reference using Closure type
+                        Closure findPrebuilds
+                        findPrebuilds = { File dir ->
+                            dir.eachFile { file ->
+                                if (file.isDirectory()) {
+                                    if (file.name == 'prebuilds') {
+                                        prebuildsDirs.add(file)
+                                    } else {
+                                        findPrebuilds.call(file)
+                                    }
+                                }
+                            }
+                        }
+                        findPrebuilds.call(targetDirFile)
+                        prebuildsDirs.each { dir ->
+                            if (dir.exists()) {
+                                dir.deleteDir()
+                                logger.info("Removed prebuilds directory: ${dir.absolutePath}")
+                            }
+                        }
+                    }
                 }
             }
 
