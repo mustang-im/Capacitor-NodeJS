@@ -267,13 +267,16 @@ import org.gradle.util.GradleVersion
                 }
                 outputs.file("${buildDirPath}/copy.timestamp")
 
+                // Capture project reference during configuration phase for configuration cache compatibility
+                def projectRef = project
+
                 doLast {
                     def buildDir = new File(buildDirPath)
                     if (buildDir.exists()) {
                         buildDir.deleteDir()
                     }
 
-                    project.copy {
+                    projectRef.copy {
                         from nodeDirPath
                         into new File(buildDir, nodeDir)
                         // Symlinks to binaries are resolved by Capacitor sync and Gradle during the copy, causing build time errors.
@@ -412,8 +415,9 @@ import org.gradle.util.GradleVersion
                         return
                     }
 
-                    def fileListPath = file("${assetsDir}/file.list")
-                    def dirListPath = file("${assetsDir}/dir.list")
+                    // Use new File() instead of file() for configuration cache compatibility
+                    def fileListPath = new File(assetsDir, "file.list")
+                    def dirListPath = new File(assetsDir, "dir.list")
                     delete fileListPath, dirListPath
 
                     def fileList = new StringBuilder()
