@@ -18,7 +18,30 @@ let libDir: string = platform == 'android' ? androidDefaultLib : iosDefaultLib;
  * fetches the lib if source is an `https://` url
  */
 export async function setupLib(libDir: string, platform: string) {
-  if (!forceDownloadNodeJS && await hasNodeJS(platform)) {
+  // Check if we need to re-download based on config
+  // If libDir is a URL and different from what's cached, force download
+  let shouldForceDownload = false;
+  if (libDir?.startsWith("https://")) {
+    try {
+      const configPath = await getConfigPath();
+      if (configPath) {
+        let config: PluginsConfig["CapacitorNodeJS"] = await readConfig(configPath);
+        const configLibDir = config?.[`${platform}LibNode`];
+        // If config specifies a different URL than what's cached, force download
+        if (configLibDir && configLibDir !== libDir && await hasNodeJS(platform)) {
+          shouldForceDownload = true;
+          console.log(`Config specifies different Node.js version (${configLibDir}), forcing re-download...`);
+        }
+      }
+    } catch (ex) {
+      // If we can't read config, continue with normal flow
+      console.log(`Could not read config to check for version mismatch: ${ex}`);
+    }
+  }
+
+  if (!forceDownloadNodeJS && !shouldForceDownload && await hasNodeJS(platform)) {
+    console.log(`Node.js library already exists at ${path.join(packageDir, platform, 'libnode')}, skipping download.`);
+    console.log(`To force re-download, set FORCE_DOWNLOAD_NODEJS=1 environment variable.`);
     return;
   }
 
@@ -30,7 +53,7 @@ export async function setupLib(libDir: string, platform: string) {
   let url = libDir;
   libDir = path.join(packageDir, platform, 'libnode');
 
-  console.log('Downloading Node.js...');
+  console.log(`Downloading Node.js from ${url}...`);
   let zipPath = await downloadNodeJS(url);
   console.log('Download finished!');
 
@@ -70,9 +93,21 @@ async function downloadNodeJS(url: string, retries = 5): Promise<string> {
 }
 
 async function extractAsset(zipPath: string, destinationPath: string) {
+  // Preserve .gitkeep file if it exists
+  const gitkeepPath = path.join(destinationPath, '.gitkeep');
+  const gitkeepExists = fs.existsSync(gitkeepPath);
+
   let zip = new AdmZip(zipPath);
   zip.extractAllTo(destinationPath, true);
   fs.unlinkSync(zipPath);
+
+  // Restore .gitkeep file if it existed before extraction
+  if (gitkeepExists && !fs.existsSync(gitkeepPath)) {
+    fs.writeFileSync(gitkeepPath, '');
+  } else if (!fs.existsSync(gitkeepPath)) {
+    // Ensure .gitkeep exists even if it didn't before (for git tracking)
+    fs.writeFileSync(gitkeepPath, '');
+  }
 }
 
 async function hasNodeJS(platform: string) {
@@ -102,7 +137,8 @@ async function main() {
     let config: PluginsConfig["CapacitorNodeJS"] = await readConfig(path);
     libDir = config?.[`${platform}LibNode`] ?? libDir;
 
-    await setupLib(platform, libDir);
+    // Fix: setupLib expects (libDir, platform) not (platform, libDir)
+    await setupLib(libDir, platform);
 
   } catch (ex) {
     console.error(ex);
