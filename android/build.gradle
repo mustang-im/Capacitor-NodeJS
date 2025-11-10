@@ -261,8 +261,20 @@ import org.gradle.util.GradleVersion
     }
 
     // Configure androidResources to exclude certain files from the APK
+    def ignorePattern = '*.gz:build-native-modules-MacOS-helper-script.sh:NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt'
+
+    // When splits are enabled and universalApk is false, exclude .node files from main assets
+    // (they should only be in architecture-specific assets directories)
+    // Note: The pattern needs to match the actual path structure in the APK
+    if (splitsEnabled && !universalApkEnabled) {
+        // Exclude .node files from public/nodejs/node_modules/ in main assets
+        // This pattern matches: assets/public/nodejs/node_modules/**/*.node
+        ignorePattern += ':public/nodejs/node_modules/**/*.node'
+        logger.info("capacitor-nodejs: Excluding .node files from assets/public/ (split APKs only) using pattern: ${ignorePattern}")
+    }
+
     android.androidResources {
-        ignoreAssetsPattern '*.gz:build-native-modules-MacOS-helper-script.sh:NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt'
+        ignoreAssetsPattern ignorePattern
     }
 
     if (GradleVersion.current() < GradleVersion.version("4.0")) {
@@ -433,7 +445,6 @@ import org.gradle.util.GradleVersion
                 }
 
                 doLast {
-
                     if (OperatingSystem.current().isMacOsX()) {
                         // Copy the helper script for calling npm when building in Android Studio on macOS.
                         def helperScript = new File(projectWWW, "build-native-modules-MacOS-helper-script.sh")
@@ -636,6 +647,14 @@ import org.gradle.util.GradleVersion
                         dependsOn "CopyNodeProjectAssets${otherAbi}"
                     }
 
+                    // Also depend on remove task to ensure wrong-architecture files are deleted from main assets first
+                    if (!currentUniversalApkEnabled) {
+                        def removeMainTask = project.tasks.findByName("RemoveNodeFilesFromMainAssets")
+                        if (removeMainTask != null) {
+                            dependsOn removeMainTask
+                        }
+                    }
+
                     def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/node_modules")
                     def targetDirPath = "${rootProject.projectDir}/app/src/main/assets-${abiName}/public/${nodeDir}/node_modules"
                     def targetDir = file(targetDirPath)
@@ -778,6 +797,90 @@ import org.gradle.util.GradleVersion
                 }
             }
 
+            // Task 3: Remove wrong-architecture .node files from architecture-specific assets for split APKs
+            // This ensures each split APK only contains .node files for its own architecture
+            if (currentSplitsEnabled && !currentUniversalApkEnabled) {
+                // For each ABI, remove .node files from other ABIs' architecture-specific assets
+                pluginAbiFilters.each { otherAbi ->
+                    if (otherAbi != abiName) {
+                        tasks.register("RemoveNodeFilesFromSplitAssets${abiName}For${otherAbi}", Delete) {
+                            description = "Remove .node files for ${otherAbi} from ${abiName} split assets (split APKs only)"
+
+                            def targetDirPath = "${rootProject.projectDir}/app/src/main/assets-${abiName}/public/${nodeDir}/node_modules"
+
+                            // Delete all .node files recursively (these are for the wrong architecture)
+                            delete fileTree(dir: targetDirPath) {
+                                include "**/*.node"
+                            }
+
+                            doLast {
+                                logger.info("capacitor-nodejs: Removed .node files from ${targetDirPath} (removing ${otherAbi} files from ${abiName} split)")
+                            }
+
+                            onlyIf {
+                                def targetDir = file(targetDirPath)
+                                if (!targetDir.exists()) {
+                                    return false
+                                }
+                                // Check if there are any .node files to delete
+                                def nodeFiles = fileTree(dir: targetDirPath) {
+                                    include "**/*.node"
+                                }
+                                return !nodeFiles.isEmpty()
+                            }
+                        }
+                    }
+                }
+
+                // Also remove .node files from main assets when splits are enabled and universalApk is false
+                // This prevents wrong-architecture files from being loaded at runtime
+                // Note: This task is registered once (for the first ABI) and removes all .node files from assets/public/
+                if (abiName == pluginAbiFilters.first()) {
+                    tasks.register("RemoveNodeFilesFromMainAssets", Delete) {
+                        description = "Remove .node files from main assets (split APKs only, not universal)"
+
+                        def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/node_modules"
+                        def targetDir = new File(targetDirPath)
+
+                        // Delete all .node files recursively
+                        delete fileTree(dir: targetDirPath) {
+                            include "**/*.node"
+                        }
+
+                        doFirst {
+                            logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssets: Checking ${targetDirPath}")
+                            if (targetDir.exists()) {
+                                def nodeFiles = fileTree(dir: targetDirPath) {
+                                    include "**/*.node"
+                                }
+                                logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssets: Found ${nodeFiles.files.size()} .node files to remove")
+                            } else {
+                                logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssets: Directory ${targetDirPath} does not exist")
+                            }
+                        }
+
+                        doLast {
+                            logger.info("capacitor-nodejs: Removed .node files from ${targetDirPath} (split APKs only)")
+                        }
+
+                        onlyIf {
+                            if (!targetDir.exists()) {
+                                return false
+                            }
+                            // Check if there are any .node files to delete
+                            def nodeFiles = fileTree(dir: targetDirPath) {
+                                include "**/*.node"
+                            }
+                            def hasNodeFiles = !nodeFiles.isEmpty()
+                            if (hasNodeFiles) {
+                                logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssets: Will remove ${nodeFiles.files.size()} .node files from ${targetDirPath}")
+                            }
+                            return hasNodeFiles
+                        }
+                    }
+                }
+            }
+
             // Make the app's mergeAssets tasks depend on copying Android .node files
             // This ensures Android-built files replace non-Android versions (macOS, Linux, Windows) before assets are merged
             // Works on both macOS and Linux build systems
@@ -792,6 +895,22 @@ import org.gradle.util.GradleVersion
                             if (mergeAssetsTask != null) {
                                 mergeAssetsTask.dependsOn mainAssetsTask
                                 logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will depend on CopyAndroidNodeFilesToAppAssets${abiName}")
+                            }
+                        }
+                    }
+
+                    // Hook up remove task for split APKs (when universalApk is false)
+                    // This removes .node files from main assets so only architecture-specific assets are used
+                    if (currentSplitsEnabled && !currentUniversalApkEnabled) {
+                        def removeMainTask = project.tasks.findByName("RemoveNodeFilesFromMainAssets")
+                        if (removeMainTask != null) {
+                            appProject.android.applicationVariants.all { variant ->
+                                def mergeAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets")
+                                if (mergeAssetsTask != null) {
+                                    // Run remove task before mergeAssets to ensure wrong-architecture files are deleted
+                                    mergeAssetsTask.dependsOn removeMainTask
+                                    logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will depend on RemoveNodeFilesFromMainAssets")
+                                }
                             }
                         }
                     }

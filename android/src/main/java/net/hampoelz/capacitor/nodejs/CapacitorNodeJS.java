@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.os.Build;
 import androidx.annotation.Nullable;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -252,9 +253,36 @@ public class CapacitorNodeJS {
     }
 
     private boolean copyNodeProjectFromAPK(String projectDir, String projectPath, String modulesPath) {
-        final String nodeAssetDir = FileOperations.CombinePath("public", projectDir);
         final String modulesAssetDir = FileOperations.CombinePath("builtin_modules");
         final AssetManager assetManager = context.getAssets();
+
+        // For split APKs, try to use architecture-specific assets first
+        // This ensures the correct architecture's .node files are loaded
+        String nodeAssetDir = null;
+        String[] supportedAbis = Build.SUPPORTED_ABIS;
+
+        // Try architecture-specific assets first (for split APKs)
+        // Android merges assets-${abi}/public/ into public/ namespace, so we check for architecture-specific assets
+        for (String abi : supportedAbis) {
+            // Check if architecture-specific assets exist (assets-arm64-v8a/public/nodejs/)
+            String archSpecificDir = FileOperations.CombinePath("public-" + abi, projectDir);
+            try {
+                String[] files = assetManager.list(archSpecificDir);
+                if (files != null && files.length > 0) {
+                    nodeAssetDir = archSpecificDir;
+                    Logger.debug(CapacitorNodeJSPlugin.LOGGER_TAG, "Using architecture-specific assets: " + archSpecificDir + " (ABI: " + abi + ")");
+                    break;
+                }
+            } catch (IOException e) {
+                // Continue to next ABI or fall back to main assets
+            }
+        }
+
+        // Fall back to main assets (for universal APKs or when architecture-specific assets not found)
+        if (nodeAssetDir == null) {
+            nodeAssetDir = FileOperations.CombinePath("public", projectDir);
+            Logger.debug(CapacitorNodeJSPlugin.LOGGER_TAG, "Using main assets: " + nodeAssetDir + " (Device ABIs: " + java.util.Arrays.toString(supportedAbis) + ")");
+        }
 
         boolean success = true;
         if (FileOperations.ExistsPath(projectPath) && isAppUpdated()) {
