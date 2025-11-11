@@ -261,7 +261,10 @@ import org.gradle.util.GradleVersion
     }
 
     // Configure androidResources to exclude certain files from the APK
-    def ignorePattern = '*.gz:build-native-modules-MacOS-helper-script.sh:NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt'
+    // Exclude build-time helper scripts and config files that shouldn't be in the final APK
+    // Patterns match paths relative to the assets directory in the APK
+    // Note: Patterns are matched against the full path within assets/, so we need to match both root and public/ paths
+    def ignorePattern = '*.gz:build-native-modules-MacOS-helper-script.sh:public/build-native-modules-MacOS-helper-script.sh:**/build-native-modules-MacOS-helper-script.sh:NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt:public/NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt'
 
     // When splits are enabled and universalApk is false, exclude .node files from main assets
     // (they should only be in architecture-specific assets directories)
@@ -400,19 +403,47 @@ import org.gradle.util.GradleVersion
         final String finalNpmBinPath = npmBinPath
 
         abisToBuild.each { abiName ->
-            def tempArch = switch (abiName) {
-                case 'armeabi-v7a' -> 'arm'
-                case 'arm64-v8a' -> 'arm64'
-                default -> abiName
+            def tempArch
+            switch (abiName) {
+                case 'armeabi-v7a':
+                    tempArch = 'arm'
+                    break
+                case 'arm64-v8a':
+                    tempArch = 'arm64'
+                    break
+                default:
+                    tempArch = abiName
             }
 
             def tempCcVer = '4.9'
-            def (tempDestCpu, tempV8Arch, tempSuffix, tempToolchainName) = switch (tempArch) {
-                case 'arm' -> ['arm', 'arm', 'arm-linux-androideabi', 'arm-linux-androideabi']
-                case 'x86' -> ['ia32', 'ia32', 'i686-linux-android', 'x86']
-                case 'x86_64' -> ['x64', 'x64', 'x86_64-linux-android', 'x86_64']
-                case 'arm64' -> ['arm64', 'arm64', 'aarch64-linux-android', 'aarch64']
-                default -> throw new GradleException("Unsupported architecture for nodejs-mobile native modules: ${tempArch}")
+            def tempDestCpu, tempV8Arch, tempSuffix, tempToolchainName
+            switch (tempArch) {
+                case 'arm':
+                    tempDestCpu = 'arm'
+                    tempV8Arch = 'arm'
+                    tempSuffix = 'arm-linux-androideabi'
+                    tempToolchainName = 'arm-linux-androideabi'
+                    break
+                case 'x86':
+                    tempDestCpu = 'ia32'
+                    tempV8Arch = 'ia32'
+                    tempSuffix = 'i686-linux-android'
+                    tempToolchainName = 'x86'
+                    break
+                case 'x86_64':
+                    tempDestCpu = 'x64'
+                    tempV8Arch = 'x64'
+                    tempSuffix = 'x86_64-linux-android'
+                    tempToolchainName = 'x86_64'
+                    break
+                case 'arm64':
+                    tempDestCpu = 'arm64'
+                    tempV8Arch = 'arm64'
+                    tempSuffix = 'aarch64-linux-android'
+                    tempToolchainName = 'aarch64'
+                    break
+                default:
+                    throw new GradleException("Unsupported architecture for nodejs-mobile native modules: ${tempArch}")
             }
 
             def ndkBundlePath = android.ndkDirectory
@@ -433,12 +464,22 @@ import org.gradle.util.GradleVersion
                 standaloneToolchain = ndkToolchainBase // For compatibility with TOOLCHAIN env var
                 npmToolchainAr = "${ndkToolchainBase}/bin/llvm-ar"
                 // NDK 27+ uses unified toolchain with architecture prefix
-                def clangArch = switch (tempArch) {
-                    case 'arm' -> 'armv7a'
-                    case 'arm64' -> 'aarch64'
-                    case 'x86' -> 'i686'
-                    case 'x86_64' -> 'x86_64'
-                    default -> tempArch
+                def clangArch
+                switch (tempArch) {
+                    case 'arm':
+                        clangArch = 'armv7a'
+                        break
+                    case 'arm64':
+                        clangArch = 'aarch64'
+                        break
+                    case 'x86':
+                        clangArch = 'i686'
+                        break
+                    case 'x86_64':
+                        clangArch = 'x86_64'
+                        break
+                    default:
+                        clangArch = tempArch
                 }
                 npmToolchainCc = "${ndkToolchainBase}/bin/${clangArch}-linux-android${apiLevel}-clang"
                 npmToolchainCxx = "${ndkToolchainBase}/bin/${clangArch}-linux-android${apiLevel}-clang++"
@@ -685,19 +726,20 @@ import org.gradle.util.GradleVersion
 
             // Copy Android-built .node files to the app's assets to replace non-Android versions (macOS, Linux, Windows)
             // When splits are enabled, we need to handle:
-            // 1. Split APKs: copy to architecture-specific assets (assets-${abi}/)
-            // 2. Universal APK (if universalApk true): copy to main assets (assets/)
+            // 1. Split APKs: copy to main assets (assets/) - each APK only contains one architecture
+            // 2. Universal APK (if universalApk true): copy to architecture-specific subdirectories to avoid conflicts
             // This works on both macOS and Linux build systems
 
             // Capture values from outer scope for use in closures
             def currentSplitsEnabled = splitsEnabled
             def currentUniversalApkEnabled = universalApkEnabled
 
-            // Task 1: Copy to architecture-specific assets for split APKs (when splits are enabled)
-            if (currentSplitsEnabled) {
+            // Task 1: Copy to main assets for split APKs (when splits enabled but universalApk is false)
+            // Each split APK only contains one architecture, so we can put .node files directly in main assets
+            if (currentSplitsEnabled && !currentUniversalApkEnabled) {
                 tasks.register("CopyAndroidNodeFilesToSplitAssets${abiName}", Copy) {
                     dependsOn "CopyBuiltNpmAssets${abiName}"
-                    description = "Copy Android-built .node files for ${abiName} to architecture-specific assets for split APKs"
+                    description = "Copy Android-built .node files for ${abiName} to main assets for split APKs"
 
                     // Depend on all CopyNodeProjectAssets tasks to ensure they all complete first
                     def abisForDeps = pluginAbiFilters
@@ -706,15 +748,13 @@ import org.gradle.util.GradleVersion
                     }
 
                     // Also depend on remove task to ensure wrong-architecture files are deleted from main assets first
-                    if (!currentUniversalApkEnabled) {
-                        def removeMainTask = project.tasks.findByName("RemoveNodeFilesFromMainAssets")
-                        if (removeMainTask != null) {
-                            dependsOn removeMainTask
-                        }
+                    def removeMainTask = project.tasks.findByName("RemoveNodeFilesFromMainAssets")
+                    if (removeMainTask != null) {
+                        dependsOn removeMainTask
                     }
 
                     def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/node_modules")
-                    def targetDirPath = "${rootProject.projectDir}/app/src/main/assets-${abiName}/public/${nodeDir}/node_modules"
+                    def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/node_modules"
                     def targetDir = file(targetDirPath)
                     def taskLogger = logger
 
@@ -738,13 +778,51 @@ import org.gradle.util.GradleVersion
                 }
             }
 
-            // Task 2: Copy to main assets for universal APK (when universalApk is true) or when no splits
+            // Task 2: Copy to architecture-specific assets for universal APK (when universalApk is true)
+            // Universal APK contains all architectures, so we need architecture-specific directories to avoid conflicts
+            if (currentSplitsEnabled && currentUniversalApkEnabled) {
+                tasks.register("CopyAndroidNodeFilesToUniversalAssets${abiName}", Copy) {
+                    dependsOn "CopyBuiltNpmAssets${abiName}"
+                    description = "Copy Android-built .node files for ${abiName} to architecture-specific assets for universal APK"
+
+                    // Depend on all CopyNodeProjectAssets tasks to ensure they all complete first
+                    def abisForDeps = pluginAbiFilters
+                    abisForDeps.each { otherAbi ->
+                        dependsOn "CopyNodeProjectAssets${otherAbi}"
+                    }
+
+                    def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/node_modules")
+                    def targetDirPath = "${rootProject.projectDir}/app/src/main/assets-${abiName}/public/${nodeDir}/node_modules"
+                    def targetDir = file(targetDirPath)
+                    def taskLogger = logger
+
+                    from sourceDir
+                    into targetDir
+                    include "**/*.node"
+                    includeEmptyDirs = false
+                    exclude "**/prebuilds/**"
+
+                    eachFile { fileCopyDetails ->
+                        def relativePathStr = fileCopyDetails.relativePath.toString()
+                        def targetFile = new File(targetDirPath, relativePathStr)
+                        if (targetFile.exists()) {
+                            taskLogger.info("Replacing ${relativePathStr} with Android-built version for ${abiName} (universal APK)")
+                        }
+                    }
+
+                    onlyIf {
+                        sourceDir.exists()
+                    }
+                }
+            }
+
+            // Task 3: Copy to main assets when no splits are enabled
             tasks.register("CopyAndroidNodeFilesToAppAssets${abiName}", Copy) {
                 dependsOn "CopyBuiltNpmAssets${abiName}"
-                description = "Copy Android-built .node files for ${abiName} to main assets (for universal APK or no splits)"
+                description = "Copy Android-built .node files for ${abiName} to main assets (no splits)"
 
                 // Depend on all CopyNodeProjectAssets tasks to ensure they all complete first
-                def abisForDeps = currentSplitsEnabled ? pluginAbiFilters : (android.defaultConfig.ndk.abiFilters ?: pluginAbiFilters)
+                def abisForDeps = android.defaultConfig.ndk.abiFilters ?: pluginAbiFilters
                 abisForDeps.each { otherAbi ->
                     dependsOn "CopyNodeProjectAssets${otherAbi}"
                 }
@@ -764,28 +842,20 @@ import org.gradle.util.GradleVersion
                     def relativePathStr = fileCopyDetails.relativePath.toString()
                     def targetFile = new File(targetDirPath, relativePathStr)
                     if (targetFile.exists()) {
-                        taskLogger.info("Replacing ${relativePathStr} with Android-built version for ${abiName} (universal APK)")
+                        taskLogger.info("Replacing ${relativePathStr} with Android-built version for ${abiName}")
                     }
                 }
 
-                // Copy logic:
-                // - If splits enabled and universalApk is true: copy all ABIs to main assets (for universal APK)
-                // - If splits enabled and universalApk is false: don't copy (split APKs use architecture-specific assets)
-                // - If splits not enabled: copy only primary ABI to main assets
                 onlyIf {
                     if (!sourceDir.exists()) {
                         return false
                     }
-                    if (currentSplitsEnabled && currentUniversalApkEnabled) {
-                        // Universal APK: copy all ABIs to main assets (all architectures included)
-                        return true
-                    } else if (currentSplitsEnabled && !currentUniversalApkEnabled) {
-                        // Split APKs only: don't copy to main assets (use architecture-specific assets)
-                        return false
-                    } else {
+                    // Only copy when splits are not enabled
+                    if (!currentSplitsEnabled) {
                         // No splits: copy only primary ABI to main assets
                         return abiName == 'arm64-v8a'
                     }
+                    return false
                 }
 
                 // Clean up prebuilds directories after copying Android-built files
@@ -936,6 +1006,53 @@ import org.gradle.util.GradleVersion
                             return hasNodeFiles
                         }
                     }
+
+                    // Also remove .node files from main assets for universal APK
+                    // Universal APK should only have .node files in architecture-specific assets
+                    if (currentSplitsEnabled && currentUniversalApkEnabled) {
+                        tasks.register("RemoveNodeFilesFromMainAssetsForUniversal", Delete) {
+                            description = "Remove .node files from main assets (universal APK - files should be in architecture-specific assets)"
+
+                            def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/node_modules"
+                            def targetDir = new File(targetDirPath)
+
+                            // Delete all .node files recursively
+                            delete fileTree(dir: targetDirPath) {
+                                include "**/*.node"
+                            }
+
+                            doFirst {
+                                logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssetsForUniversal: Checking ${targetDirPath}")
+                                if (targetDir.exists()) {
+                                    def nodeFiles = fileTree(dir: targetDirPath) {
+                                        include "**/*.node"
+                                    }
+                                    logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssetsForUniversal: Found ${nodeFiles.files.size()} .node files to remove")
+                                } else {
+                                    logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssetsForUniversal: Directory ${targetDirPath} does not exist")
+                                }
+                            }
+
+                            doLast {
+                                logger.info("capacitor-nodejs: Removed .node files from ${targetDirPath} (universal APK - files should be in architecture-specific assets)")
+                            }
+
+                            onlyIf {
+                                if (!targetDir.exists()) {
+                                    return false
+                                }
+                                // Check if there are any .node files to delete
+                                def nodeFiles = fileTree(dir: targetDirPath) {
+                                    include "**/*.node"
+                                }
+                                def hasNodeFiles = !nodeFiles.isEmpty()
+                                if (hasNodeFiles) {
+                                    logger.info("capacitor-nodejs: RemoveNodeFilesFromMainAssetsForUniversal: Will remove ${nodeFiles.files.size()} .node files from ${targetDirPath}")
+                                }
+                                return hasNodeFiles
+                            }
+                        }
+                    }
                 }
             }
 
@@ -945,14 +1062,16 @@ import org.gradle.util.GradleVersion
             gradle.projectsEvaluated {
                 def appProject = rootProject.findProject(':app')
                 if (appProject != null) {
-                    // Hook up main assets task (for universal APK or no splits)
-                    def mainAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToAppAssets${abiName}")
-                    if (mainAssetsTask != null) {
-                        appProject.android.applicationVariants.all { variant ->
-                            def mergeAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets")
-                            if (mergeAssetsTask != null) {
-                                mergeAssetsTask.dependsOn mainAssetsTask
-                                logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will depend on CopyAndroidNodeFilesToAppAssets${abiName}")
+                    // Hook up main assets task (only for no splits - not for split or universal APK)
+                    if (!currentSplitsEnabled) {
+                        def mainAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToAppAssets${abiName}")
+                        if (mainAssetsTask != null) {
+                            appProject.android.applicationVariants.all { variant ->
+                                def mergeAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets")
+                                if (mergeAssetsTask != null) {
+                                    mergeAssetsTask.dependsOn mainAssetsTask
+                                    logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will depend on CopyAndroidNodeFilesToAppAssets${abiName} (no splits)")
+                                }
                             }
                         }
                     }
@@ -973,8 +1092,9 @@ import org.gradle.util.GradleVersion
                         }
                     }
 
-                    // Hook up split assets task (for split APKs when splits are enabled)
-                    if (currentSplitsEnabled) {
+                    // Hook up split assets task (for split APKs when splits enabled and universalApk is false)
+                    // Split APKs: each APK only contains one architecture, so .node files go to main assets
+                    if (currentSplitsEnabled && !currentUniversalApkEnabled) {
                         def splitAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToSplitAssets${abiName}")
                         if (splitAssetsTask != null) {
                             appProject.android.applicationVariants.all { variant ->
@@ -996,10 +1116,136 @@ import org.gradle.util.GradleVersion
                             }
                         }
                     }
+
+                    // Hook up universal APK task (when splits enabled and universalApk is true)
+                    // Universal APK: contains all architectures, so .node files go to architecture-specific assets
+                    if (currentSplitsEnabled && currentUniversalApkEnabled) {
+                        // First, ensure .node files are removed from main assets for universal APK
+                        def removeMainTaskForUniversal = project.tasks.findByName("RemoveNodeFilesFromMainAssetsForUniversal")
+                        if (removeMainTaskForUniversal != null) {
+                            appProject.android.applicationVariants.all { variant ->
+                                def mergeAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets")
+                                if (mergeAssetsTask != null) {
+                                    mergeAssetsTask.dependsOn removeMainTaskForUniversal
+                                    logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will depend on RemoveNodeFilesFromMainAssetsForUniversal (universal APK)")
+                                }
+                            }
+                        }
+
+                        def universalAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToUniversalAssets${abiName}")
+                        if (universalAssetsTask != null) {
+                            // Make universal task depend on remove task
+                            if (removeMainTaskForUniversal != null) {
+                                universalAssetsTask.dependsOn removeMainTaskForUniversal
+                            }
+
+                            appProject.android.applicationVariants.all { variant ->
+                                // For universal APK, hook into architecture-specific merge tasks
+                                def abiSanitized = abiName.replaceAll('-', '').replaceAll('_', '')
+                                def mergeSplitAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets${abiSanitized.capitalize()}")
+                                if (mergeSplitAssetsTask != null) {
+                                    mergeSplitAssetsTask.dependsOn universalAssetsTask
+                                    logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets${abiSanitized.capitalize()} will depend on CopyAndroidNodeFilesToUniversalAssets${abiName}")
+                                }
+                                // Also hook into main mergeAssets task to ensure universal APK includes all architectures
+                                def mergeAssetsTask = appProject.tasks.findByName("merge${variant.name.capitalize()}Assets")
+                                if (mergeAssetsTask != null) {
+                                    mergeAssetsTask.dependsOn universalAssetsTask
+                                    logger.info("capacitor-nodejs: merge${variant.name.capitalize()}Assets will also depend on CopyAndroidNodeFilesToUniversalAssets${abiName} (universal APK)")
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            android.sourceSets.main.assets.srcDirs += "${rootBuildDir}/nodejs-native-assets/"
+            // Copy file.list and dir.list to final assets location instead of including entire build directory
+            // This prevents build artifacts (nodejs-native-assets-*) from being included in the APK
+            // Note: This code is inside the abisToBuild.each loop, so we use the outer loop's abiName variable
+            // Copy list files to main assets for split APKs (each APK only contains one architecture)
+            if (currentSplitsEnabled && !currentUniversalApkEnabled) {
+                tasks.register("CopyNodeAssetsListsToSplit${abiName}", Copy) {
+                    dependsOn "GenerateNodeNativeAssetsLists${abiName}"
+                    description = "Copy file.list and dir.list for ${abiName} to main assets (split APKs)"
+
+                    def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/")
+                    def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/"
+                    def targetDir = file(targetDirPath)
+
+                    from sourceDir
+                    into targetDir
+                    include "file.list"
+                    include "dir.list"
+
+                    onlyIf {
+                        new File(sourceDir, "file.list").exists() || new File(sourceDir, "dir.list").exists()
+                    }
+                }
+
+                // Make the split assets copy task depend on copying the list files
+                def splitAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToSplitAssets${abiName}")
+                if (splitAssetsTask != null) {
+                    splitAssetsTask.dependsOn "CopyNodeAssetsListsToSplit${abiName}"
+                }
+            }
+
+            // Copy list files to architecture-specific assets for universal APK (contains all architectures)
+            if (currentSplitsEnabled && currentUniversalApkEnabled) {
+                tasks.register("CopyNodeAssetsListsToUniversal${abiName}", Copy) {
+                    dependsOn "GenerateNodeNativeAssetsLists${abiName}"
+                    description = "Copy file.list and dir.list for ${abiName} to architecture-specific assets (universal APK)"
+
+                    def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/")
+                    def targetDirPath = "${rootProject.projectDir}/app/src/main/assets-${abiName}/public/${nodeDir}/"
+                    def targetDir = file(targetDirPath)
+
+                    from sourceDir
+                    into targetDir
+                    include "file.list"
+                    include "dir.list"
+
+                    onlyIf {
+                        new File(sourceDir, "file.list").exists() || new File(sourceDir, "dir.list").exists()
+                    }
+                }
+
+                // Make the universal assets copy task depend on copying the list files
+                def universalAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToUniversalAssets${abiName}")
+                if (universalAssetsTask != null) {
+                    universalAssetsTask.dependsOn "CopyNodeAssetsListsToUniversal${abiName}"
+                }
+            }
+
+            // Copy list files to main assets (for no splits)
+            tasks.register("CopyNodeAssetsListsToMain${abiName}", Copy) {
+                dependsOn "GenerateNodeNativeAssetsLists${abiName}"
+                description = "Copy file.list and dir.list for ${abiName} to main assets (no splits)"
+
+                def sourceDir = file("${rootBuildDir}/nodejs-native-assets/nodejs-native-assets-${abiName}/")
+                def targetDirPath = "${rootProject.projectDir}/app/src/main/assets/public/${nodeDir}/"
+                def targetDir = file(targetDirPath)
+
+                from sourceDir
+                into targetDir
+                include "file.list"
+                include "dir.list"
+
+                onlyIf {
+                    if (!currentSplitsEnabled) {
+                        return new File(sourceDir, "file.list").exists() || new File(sourceDir, "dir.list").exists()
+                    }
+                    return false
+                }
+            }
+
+            // Make the main assets copy task depend on copying the list files
+            def mainAssetsTask = project.tasks.findByName("CopyAndroidNodeFilesToAppAssets${abiName}")
+            if (mainAssetsTask != null) {
+                mainAssetsTask.dependsOn "CopyNodeAssetsListsToMain${abiName}"
+            }
+
+            // Don't add the build directory to assets - it contains build artifacts that shouldn't be in the APK
+            // The .node files and list files are copied to the final assets location by the copy tasks above
         }
     }
 }.call()
