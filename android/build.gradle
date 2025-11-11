@@ -342,22 +342,62 @@ import org.gradle.util.GradleVersion
         // (e.g., when Gradle is run from Android Studio). The helper script is created by
         // the Capacitor prepare hook with the PATH that was available during sync/prepare.
         String npmCommandName = 'npm'
+        String npmBinPath = null
         if (OperatingSystem.current().isMacOsX()) {
             // Check if helper script exists - if it does, prefer it since it has the correct PATH
             def helperScript = file("${projectWWW}/build-native-modules-MacOS-helper-script.sh")
             if (helperScript.exists()) {
                 npmCommandName = '../build-native-modules-MacOS-helper-script.sh'
             } else {
-                // If no helper script, try to find npm in PATH using a simple check
-                // (avoiding exec during configuration phase which can fail)
+                // If no helper script, try to find npm using multiple methods
+                // First, try to find npm in current PATH
                 def npmPath = System.getenv('PATH')?.split(File.pathSeparator)?.find { path ->
                     new File(path, 'npm').exists() || new File(path, 'npm.cmd').exists()
                 }
+
+                // If not found in PATH, try using 'which npm' command
                 if (npmPath == null) {
+                    try {
+                        def process = "which npm".execute()
+                        process.waitFor()
+                        if (process.exitValue() == 0) {
+                            def npmFullPath = process.text.trim()
+                            npmPath = new File(npmFullPath).parent
+                        }
+                    } catch (Exception e) {
+                        // Ignore - will try nvm locations next
+                    }
+                }
+
+                // If still not found, try common nvm locations
+                if (npmPath == null) {
+                    def homeDir = System.getProperty("user.home")
+                    def nvmDir = new File(homeDir, ".nvm")
+                    if (nvmDir.exists()) {
+                        def nodeVersions = new File(nvmDir, "versions/node")
+                        if (nodeVersions.exists()) {
+                            def latestNode = nodeVersions.listFiles()?.findAll { it.isDirectory() }?.sort()?.last()
+                            if (latestNode != null) {
+                                def nvmNpmPath = new File(latestNode, "bin")
+                                if (nvmNpmPath.exists() && new File(nvmNpmPath, "npm").exists()) {
+                                    npmPath = nvmNpmPath.absolutePath
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (npmPath != null) {
+                    npmBinPath = npmPath
+                    logger.info("Found npm at: ${npmPath}")
+                } else {
                     logger.warn("Couldn't find npm in the PATH for building native modules. Will try to use 'npm' directly.")
                 }
             }
         }
+
+        // Capture npmBinPath in a final variable for use in closures
+        final String finalNpmBinPath = npmBinPath
 
         abisToBuild.each { abiName ->
             def tempArch = switch (abiName) {
@@ -455,6 +495,8 @@ import org.gradle.util.GradleVersion
                                     output << input
                                 }
                             }
+                            // Make the script executable (required for Gradle to run it)
+                            targetScript.setExecutable(true)
                         }
                     }
 
@@ -488,6 +530,15 @@ import org.gradle.util.GradleVersion
                 outputs.dir("${buildDir}/${nodeDir}/")
 
                 workingDir "${buildDir}/${nodeDir}/"
+
+                // If using helper script, use absolute path to avoid path resolution issues
+                def actualNpmCommand = npmCommandName
+                if (npmCommandName == '../build-native-modules-MacOS-helper-script.sh') {
+                    def helperScriptPath = new File(buildDir, 'build-native-modules-MacOS-helper-script.sh')
+                    if (helperScriptPath.exists()) {
+                        actualNpmCommand = helperScriptPath.absolutePath
+                    }
+                }
 
                 // Look for nodejs-mobile-gyp in the directory where Capacitor CLI is called from
                 // rootProjectDir is mobile/android, so ../ goes to mobile/ (where Capacitor CLI is called from)
@@ -528,7 +579,14 @@ import org.gradle.util.GradleVersion
                     }
                 }
 
-                commandLine npmCommandName, '--verbose', 'rebuild', '--build-from-source'
+                commandLine actualNpmCommand, '--verbose', 'rebuild', '--build-from-source'
+
+                // Set PATH to include npm if we found it but it's not in the default PATH
+                if (finalNpmBinPath != null) {
+                    def currentPath = System.getenv('PATH') ?: ''
+                    def newPath = finalNpmBinPath + File.pathSeparator + currentPath
+                    environment 'PATH', newPath
+                }
 
                 environment 'npm_config_node_engine', 'v8'
                 // Use libnode directory - it's in android/libnode
