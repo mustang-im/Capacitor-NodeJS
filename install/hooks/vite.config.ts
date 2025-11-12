@@ -9,6 +9,10 @@ export default defineConfig({
     rollupOptions: {
       input: {
         'after-copy': resolve(__dirname, 'after-copy.ts'),
+        'after-prepare-native-modules-preference': resolve(__dirname, 'both/after-prepare-native-modules-preference.ts'),
+        'after-prepare-patch-npm-packages': resolve(__dirname, 'both/after-prepare-patch-npm-packages.ts'),
+        'after-prepare-build-node-assets-lists': resolve(__dirname, 'android/after-prepare-build-node-assets-lists.ts'),
+        'after-prepare-create-macOS-builder-helper': resolve(__dirname, 'android/after-prepare-create-macOS-builder-helper.ts'),
       },
       output: {
         format: 'es',
