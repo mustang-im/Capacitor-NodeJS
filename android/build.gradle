@@ -460,7 +460,9 @@ afterEvaluate {
                 dependsOn "MakeToolchain${abiName}", "CopyNodeProjectAssets${abiName}"
                 description = "Building native modules for ${abiName}."
                 workingDir "${tempBuildDir}/nodejs-project/"
-                commandLine npmCommandName, '--verbose', 'rebuild', '--build-from-source'
+                // Skip scripts during rebuild - we're rebuilding native modules from source,
+                // and postinstall scripts (like esbuild's) can fail in the Android build environment
+                commandLine npmCommandName, '--verbose', 'rebuild', '--build-from-source', '--ignore-scripts'
 
                 inputs.file "${tempBuildDir}/copy.timestamp"
                 outputs.dir "${tempBuildDir}/nodejs-project/"
