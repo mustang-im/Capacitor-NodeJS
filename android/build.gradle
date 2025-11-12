@@ -135,46 +135,66 @@ def shouldBuildNativeModules(projectWWW) {
 }
 
 def findNpmCommand(projectWWW) {
-    if (!isMacOS()) {
+    // First, check if npm is in PATH
+    def pathEnv = System.getenv('PATH')
+    if (pathEnv) {
+        def pathDirs = pathEnv.split(File.pathSeparator)
+        for (def pathDir : pathDirs) {
+            def npmPath = new File(pathDir, 'npm')
+            if (npmPath.exists() && npmPath.canExecute()) {
+                // Return full path to ensure Gradle can find it
+                return npmPath.absolutePath
+            }
+        }
+    }
+
+    // Check common npm locations
+    def commonNpmPaths = [
+        '/usr/local/bin/npm',
+        '/opt/homebrew/bin/npm'
+    ]
+    for (def npmPathStr : commonNpmPaths) {
+        def npmFile = file(npmPathStr)
+        if (npmFile.exists() && npmFile.canExecute()) {
+            return npmFile.absolutePath
+        }
+    }
+
+    // Check nvm locations (common pattern)
+    def homeDir = System.getProperty('user.home')
+    def nvmVersionsDir = file("${homeDir}/.nvm/versions/node")
+    if (nvmVersionsDir.exists() && nvmVersionsDir.isDirectory()) {
+        // Look for npm in nvm node versions
+        nvmVersionsDir.eachDir { nodeVersionDir ->
+            def nvmNpm = new File(nodeVersionDir, 'bin/npm')
+            if (nvmNpm.exists() && nvmNpm.canExecute()) {
+                return nvmNpm.absolutePath
+            }
+        }
+    }
+
+    // Fallback: try to use 'which npm' if available (Unix-like systems)
+    if (!isMacOS() && !isLinux()) {
+        // On non-Unix systems, just return 'npm' and hope it's in PATH
+        logger.warn("Couldn't find npm in common locations. Will use 'npm' from PATH.")
         return 'npm'
     }
 
-    // On macOS, check if npm is in PATH using a simple check
+    // Try to execute 'which npm' to find it
     try {
-        def pathEnv = System.getenv('PATH')
-        if (pathEnv) {
-            def pathDirs = pathEnv.split(File.pathSeparator)
-            for (def pathDir : pathDirs) {
-                def npmPath = new File(pathDir, 'npm')
-                if (npmPath.exists() && npmPath.canExecute()) {
-                    return 'npm'
-                }
+        def proc = ['which', 'npm'].execute()
+        proc.waitFor()
+        if (proc.exitValue() == 0) {
+            def npmPath = proc.text.trim()
+            if (npmPath && new File(npmPath).exists()) {
+                return npmPath
             }
-        }
-        // Also check common npm locations
-        def commonNpmPaths = [
-            '/usr/local/bin/npm',
-            '/opt/homebrew/bin/npm'
-        ]
-        for (def npmPathStr : commonNpmPaths) {
-            def npmFile = file(npmPathStr)
-            if (npmFile.exists() && npmFile.canExecute()) {
-                return 'npm'
-            }
-        }
-        // Check nvm location (common pattern)
-        def homeDir = System.getProperty('user.home')
-        def nvmNpm = file("${homeDir}/.nvm/versions/node")
-        if (nvmNpm.exists() && nvmNpm.isDirectory()) {
-            // If nvm directory exists, assume npm might be available via PATH
-            return 'npm'
         }
     } catch (Exception e) {
-        logger.warn("Couldn't check for npm in PATH: ${e.message}")
+        // 'which' might not be available
     }
 
-    // If we can't find npm explicitly, just return 'npm' and let the system PATH handle it
-    // The build will fail with a clear error if npm is truly not available
+    // Last resort: return 'npm' and let the system handle it
     logger.warn("Couldn't find npm in common locations. Will use 'npm' from PATH.")
     return 'npm'
 }
@@ -457,10 +477,18 @@ afterEvaluate {
                 environment('npm_config_platform', 'android')
                 environment('npm_config_format', 'make-android')
 
+                // Ensure PATH includes npm's directory and node_modules/.bin
+                def npmDir = new File(npmCommandName).parentFile
+                def pathBuilder = new StringBuilder()
                 def originalProjectBin = "${projectWWW}/nodejs/node_modules/.bin"
                 if (file(originalProjectBin).exists()) {
-                    environment('PATH', "${originalProjectBin}${File.pathSeparator}${System.env.PATH}")
+                    pathBuilder.append(originalProjectBin).append(File.pathSeparator)
                 }
+                if (npmDir && npmDir.exists()) {
+                    pathBuilder.append(npmDir.absolutePath).append(File.pathSeparator)
+                }
+                pathBuilder.append(System.env.PATH ?: '')
+                environment('PATH', pathBuilder.toString())
 
                 environment('TOOLCHAIN', standaloneToolchain.absolutePath)
                 // Use llvm-ar instead of ${archConfig.suffix}-ar
