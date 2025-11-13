@@ -45,7 +45,7 @@
     "docgen": "docgen --api NodeJSInterface --output-readme README.md --output-json dist/docs.json",
     "build-bridge": "tsc --project bridge/tsconfig.json && rollup -c bridge/rollup.config.mjs && rimraf ./bridge/build",
     "build-electron": "tsc --project electron/tsconfig.json && rollup -c electron/rollup.config.mjs && rimraf ./electron/build",
-    "build-scripts": "cd scripts && vite build --config vite.config.ts && chmod +x dist/after-copy.js",
+    "build-scripts": "cd scripts && vite build --config vite.config.ts && chmod +x dist/after-copy.js dist/rebuild-native-module.js",
     "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs && npm run build-electron && npm run build-bridge && npm run build-scripts",
     "clean": "rimraf ./dist && rimraf ./scripts/dist",
     "watch": "tsc --watch",

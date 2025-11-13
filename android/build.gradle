@@ -1,3 +1,7 @@
+plugins {
+    id 'com.android.library'
+}
+
 ext {
     junitVersion = project.hasProperty('junitVersion') ? rootProject.ext.junitVersion : '4.13.2'
     androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.7.0'
@@ -5,24 +9,17 @@ ext {
     androidxEspressoCoreVersion = project.hasProperty('androidxEspressoCoreVersion') ? rootProject.ext.androidxEspressoCoreVersion : '3.6.1'
 }
 
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.2'
-    }
-}
-
-apply plugin: 'com.android.library'
-
 android {
     namespace "net.hampoelz.capacitor.nodejs"
-    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
+    
+    compileSdk project.findProperty('compileSdkVersion')?.toInteger() ?: 
+               (project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion.toInteger() : 35)
+    
     defaultConfig {
-        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 23
-        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
+        minSdk project.findProperty('minSdkVersion')?.toInteger() ?: 
+               (project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion.toInteger() : 23)
+        targetSdk project.findProperty('targetSdkVersion')?.toInteger() ?: 
+                  (project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion.toInteger() : 35)
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -33,7 +30,9 @@ android {
             }
         }
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+            // abiFilters will be configured in postBuildExtras (called by root project)
+            // Set a default to prevent building for all architectures
+            abiFilters "arm64-v8a"
         }
     }
     buildTypes {
@@ -42,7 +41,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    lintOptions {
+    lint {
         abortOnError false
     }
     compileOptions {
@@ -69,4 +68,499 @@ dependencies {
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+}
+
+// Define postBuildExtras for root project to call
+// The root project should call this in its build.gradle with:
+//   if (project.hasProperty('postBuildExtras')) {
+//       project.postBuildExtras()
+//   }
+// Helper functions for native module building
+def isMacOS() {
+    return System.getProperty('os.name').toLowerCase().contains('mac')
+}
+
+def isLinux() {
+    return System.getProperty('os.name').toLowerCase().contains('linux')
+}
+
+def findProjectWWWPath(appProject) {
+    if (appProject) {
+        def assetsDir = file("${appProject.projectDir}/src/main/assets/public")
+        if (assetsDir.exists()) {
+            return assetsDir.absolutePath
+        }
+    }
+    
+    // Fallback: try to find assets in common locations
+    def possiblePaths = [
+        file("${project.rootProject.projectDir}/android/app/src/main/assets/public"),
+        file("${project.projectDir}/src/main/assets/public")
+    ]
+    
+    for (def path : possiblePaths) {
+        if (path.exists()) {
+            return path.absolutePath
+        }
+    }
+    
+    return null
+}
+
+def getNodeDirFromConfig(projectWWW) {
+    // Try to read Capacitor config to get nodeDir
+    def configFiles = [
+        file("${project.rootProject.projectDir}/capacitor.config.json"),
+        file("${project.rootProject.projectDir}/capacitor.config.js"),
+        file("${project.rootProject.projectDir}/capacitor.config.ts")
+    ]
+    
+    for (def configFile : configFiles) {
+        if (configFile.exists()) {
+            try {
+                if (configFile.name.endsWith('.json')) {
+                    def config = new groovy.json.JsonSlurper().parse(configFile)
+                    def nodeDir = config?.plugins?.CapacitorNodeJS?.nodeDir ?: 'nodejs'
+                    def nodeDirPath = file("${projectWWW}/${nodeDir}")
+                    if (nodeDirPath.exists()) {
+                        return nodeDirPath.absolutePath
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("Could not parse Capacitor config: ${e.message}")
+            }
+        }
+    }
+    
+    // Default to nodejs
+    def defaultNodeDir = file("${projectWWW}/nodejs")
+    if (defaultNodeDir.exists()) {
+        return defaultNodeDir.absolutePath
+    }
+    
+    return null
+}
+
+def isGypNodeAddon(modulePath) {
+    def bindingGyp = file("${modulePath}/binding.gyp")
+    if (!bindingGyp.exists()) {
+        return false
+    }
+    
+    def packageJson = file("${modulePath}/package.json")
+    if (!packageJson.exists()) {
+        return false
+    }
+    
+    try {
+        def pkg = new groovy.json.JsonSlurper().parse(packageJson)
+        // Check if it has install/rebuild scripts or gypfile flag
+        if (pkg.scripts?.install || pkg.scripts?.rebuild || pkg.gypfile) {
+            return true
+        }
+    } catch (Exception e) {
+        // Ignore parse errors
+    }
+    
+    return bindingGyp.exists()
+}
+
+def findNodeGypPath() {
+    // First, try to find Capacitor config directory (project root)
+    def configRoot = project.rootProject.projectDir
+    def configFiles = [
+        file("${configRoot}/capacitor.config.json"),
+        file("${configRoot}/capacitor.config.js"),
+        file("${configRoot}/capacitor.config.ts")
+    ]
+    
+    // Find the actual config directory
+    for (def configFile : configFiles) {
+        if (configFile.exists()) {
+            configRoot = configFile.parentFile
+            break
+        }
+    }
+    
+    // Search paths in order of preference:
+    // 1. Config directory's node_modules
+    // 2. Root project's node_modules
+    // 3. Plugin's node_modules
+    // 4. Parent directories (for monorepos)
+    def possiblePaths = [
+        file("${configRoot}/node_modules/nodejs-mobile-gyp/bin/node-gyp.js"),
+        file("${project.rootProject.projectDir}/node_modules/nodejs-mobile-gyp/bin/node-gyp.js"),
+        file("${project.projectDir}/node_modules/nodejs-mobile-gyp/bin/node-gyp.js"),
+        file("${configRoot}/../node_modules/nodejs-mobile-gyp/bin/node-gyp.js"),
+        file("${project.rootProject.projectDir}/../../node_modules/nodejs-mobile-gyp/bin/node-gyp.js")
+    ]
+    
+    for (def gypPath : possiblePaths) {
+        if (gypPath.exists()) {
+            return gypPath.absolutePath
+        }
+    }
+    
+    return null
+}
+
+def getArchitectureConfig(abiName) {
+    def arch = abiName == 'armeabi-v7a' ? 'arm' : (abiName == 'arm64-v8a' ? 'arm64' : abiName)
+    
+    def config = [:]
+    switch (arch) {
+        case 'arm':
+            config.arch = 'arm'
+            config.destCpu = 'arm'
+            config.v8Arch = 'arm'
+            config.suffix = 'arm-linux-androideabi'
+            config.toolchainName = config.suffix
+            break
+        case 'x86':
+            config.arch = 'x86'
+            config.destCpu = 'ia32'
+            config.v8Arch = 'ia32'
+            config.suffix = 'i686-linux-android'
+            config.toolchainName = 'x86'
+            break
+        case 'x86_64':
+            config.arch = 'x86_64'
+            config.destCpu = 'x64'
+            config.v8Arch = 'x64'
+            config.suffix = 'x86_64-linux-android'
+            config.toolchainName = 'x86_64'
+            break
+        case 'arm64':
+            config.arch = 'arm64'
+            config.destCpu = 'arm64'
+            config.v8Arch = 'arm64'
+            config.suffix = 'aarch64-linux-android'
+            config.toolchainName = 'aarch64'
+            break
+        default:
+            throw new GradleException("Unsupported architecture for capacitor-nodejs native modules: ${arch}")
+    }
+    
+    return config
+}
+
+def buildGypDefines(archConfig) {
+    def defines = "target_arch=${archConfig.arch} v8_target_arch=${archConfig.v8Arch} android_target_arch=${archConfig.arch}"
+    
+    if (isMacOS()) {
+        defines += " host_os=mac OS=android"
+    } else if (isLinux()) {
+        defines += " host_os=linux OS=android"
+    } else {
+        throw new GradleException("Unsupported operating system for capacitor-nodejs native builds: ${System.getProperty('os.name')}")
+    }
+    
+    return defines
+}
+
+ext.postBuildExtras = {
+    // This is called by the root project if needed
+    // The ABI filters are already configured in afterEvaluate below
+}
+
+// Configure abiFilters and build native modules
+afterEvaluate {
+    // Configure abiFilters from root project
+    def appProject = project.rootProject.subprojects.find { it.name == 'app' }
+    def rootAbiFilters = null
+    
+    if (appProject && appProject.hasProperty('android')) {
+        try {
+            rootAbiFilters = appProject.android.defaultConfig.ndk.abiFilters
+        } catch (Exception e) {
+            logger.warn("Could not read abiFilters from app project: ${e.message}")
+        }
+    }
+    
+    if (rootAbiFilters == null || rootAbiFilters.isEmpty()) {
+        // Fallback: try to read from rootProject properties
+        def rootAbiFiltersProperty = project.findProperty('ndkAbiFilters')
+        if (rootAbiFiltersProperty) {
+            rootAbiFilters = rootAbiFiltersProperty.split(',').collect { it.trim() }
+        }
+    }
+    
+    // Clear defaults and set the correct ABI filter
+    android.defaultConfig.ndk.abiFilters.clear()
+    
+    if (rootAbiFilters == null || rootAbiFilters.isEmpty()) {
+        // Use the default we set earlier (arm64-v8a)
+        android.defaultConfig.ndk.abiFilters = ["arm64-v8a"] as Set<String>
+        logger.info("capacitor-nodejs: Using default ABI filter: arm64-v8a")
+    } else {
+        // Check if more than one ABI is specified
+        def abiList = rootAbiFilters instanceof Collection ? rootAbiFilters : [rootAbiFilters]
+        if (abiList.size() > 1) {
+            throw new GradleException("capacitor-nodejs currently only supports building for a single ABI at a time. Found ${abiList.size()} ABIs: ${abiList.join(', ')}. Please configure your app to build for only one ABI.")
+        }
+        
+        // Set the single ABI filter
+        android.defaultConfig.ndk.abiFilters = abiList as Set<String>
+        logger.info("capacitor-nodejs: Using ABI filter from root project: ${abiList[0]}")
+    }
+    
+    // Build native modules after abiFilters are configured
+    def projectWWW = findProjectWWWPath(appProject)
+    
+    if (projectWWW == null) {
+        logger.warn('capacitor-nodejs: Could not find the www folder. Native module building will be skipped.')
+        return
+    }
+    
+    def nodeDirPath = getNodeDirFromConfig(projectWWW)
+    if (nodeDirPath == null) {
+        logger.warn('capacitor-nodejs: Could not find nodeDir. Native module building will be skipped.')
+        return
+    }
+    
+    def nodeModulesPath = file("${nodeDirPath}/node_modules")
+    if (!nodeModulesPath.exists()) {
+        logger.info('capacitor-nodejs: No node_modules found. Skipping native module building.')
+        return
+    }
+    
+    // Get the single ABI that was configured
+    def abiFilters = android.defaultConfig.ndk.abiFilters
+    if (abiFilters == null || abiFilters.isEmpty()) {
+        logger.warn('capacitor-nodejs: No ABI filters configured. Skipping native module building.')
+        return
+    }
+    
+    def abiName = abiFilters.first()
+    def archConfig = getArchitectureConfig(abiName)
+    
+    // Handle both Provider<File> and File types for ndkDirectory
+    def ndkDirectory
+    def ndkDirValue = android.ndkDirectory
+    if (ndkDirValue.metaClass.respondsTo(ndkDirValue, 'get')) {
+        // Newer AGP versions: ndkDirectory is a Provider<File>
+        ndkDirectory = ndkDirValue.get().asFile
+    } else {
+        // Older AGP versions: ndkDirectory is already a File
+        ndkDirectory = ndkDirValue as File
+    }
+    
+    // Handle both Provider<Directory> and File types for buildDirectory
+    def buildDir
+    if (rootProject.hasProperty('layout') && rootProject.layout.hasProperty('buildDirectory')) {
+        // Newer Gradle versions: use layout.buildDirectory
+        buildDir = rootProject.layout.buildDirectory.get().asFile
+    } else {
+        // Older Gradle versions: use buildDir property
+        buildDir = rootProject.buildDir
+    }
+    def npmGypDefines = buildGypDefines(archConfig)
+    
+    // Use modern NDK prebuilt toolchains (no standalone toolchain needed)
+    def hostTag = isMacOS() ? 'darwin-x86_64' : (isLinux() ? 'linux-x86_64' : 'windows-x86_64')
+    def prebuiltToolchainDir = new File(ndkDirectory, "toolchains/llvm/prebuilt/${hostTag}")
+    def prebuiltBinDir = new File(prebuiltToolchainDir, "bin")
+    
+    if (!prebuiltBinDir.exists()) {
+        logger.warn("capacitor-nodejs: Prebuilt toolchain not found at ${prebuiltBinDir.absolutePath}. Native module building may fail.")
+    }
+    
+    // Determine the API level to use (default to 22 for compatibility)
+    def targetApi = project.findProperty('minSdkVersion')?.toInteger() ?: 
+                   (project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion.toInteger() : 22)
+    
+    // Build compiler names based on architecture and API level
+    def compilerPrefix = archConfig.suffix
+    def clang = "${compilerPrefix}${targetApi}-clang"
+    def clangxx = "${compilerPrefix}${targetApi}-clang++"
+    def ar = "llvm-ar"
+    
+    def clangPath = new File(prebuiltBinDir, clang)
+    def clangxxPath = new File(prebuiltBinDir, clangxx)
+    def arPath = new File(prebuiltBinDir, ar)
+    
+    // Find all modules with .gyp files
+    def gypModules = []
+    fileTree(nodeModulesPath).visit { fileDetails ->
+        if (fileDetails.name == 'binding.gyp' && fileDetails.file.isFile()) {
+            def modulePath = fileDetails.file.parentFile
+            if (isGypNodeAddon(modulePath.absolutePath)) {
+                gypModules.add(modulePath.absolutePath)
+            }
+        }
+    }
+    
+    if (gypModules.isEmpty()) {
+        logger.info('capacitor-nodejs: No native modules with .gyp files found.')
+        return
+    }
+    
+    logger.info("capacitor-nodejs: Found ${gypModules.size()} native module(s) to rebuild for ${abiName}")
+    
+    // Create tasks for each native module
+    def npmGypPath = findNodeGypPath()
+    if (npmGypPath != null) {
+        // Find the rebuild script (similar to prebuild-for-nodejs-mobile approach)
+        def pluginRoot = project.projectDir.parentFile
+        def rebuildScript = new File(pluginRoot, 'scripts/dist/rebuild-native-module.js')
+        
+        // Also try finding it in node_modules if this is a published package
+        if (!rebuildScript.exists()) {
+            def configRoot = project.rootProject.projectDir
+            rebuildScript = new File(configRoot, 'node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js')
+        }
+        
+        if (!rebuildScript.exists()) {
+            logger.warn("capacitor-nodejs: rebuild-native-module.js not found. Native modules will not be rebuilt.")
+            return
+        }
+        
+        // Create compiler wrapper scripts to filter out macOS-specific flags
+        def wrapperDir = new File(buildDir, "compiler-wrappers")
+        wrapperDir.mkdirs()
+        
+        // Create CC wrapper that filters out -arch flags
+        def ccWrapper = new File(wrapperDir, clang)
+        ccWrapper.withWriter { writer ->
+            writer.println('#!/bin/sh')
+            writer.println('# Filter out macOS-specific -arch flags')
+            writer.println('filtered_args=""')
+            writer.println('skip_next=0')
+            writer.println('for arg in "$@"; do')
+            writer.println('  if [ $skip_next -eq 1 ]; then')
+            writer.println('    skip_next=0')
+            writer.println('    continue')
+            writer.println('  fi')
+            writer.println('  case "$arg" in')
+            writer.println('    -arch) skip_next=1; continue ;;')
+            writer.println('    -arch*) continue ;;')
+            writer.println('    *) filtered_args="$filtered_args $arg" ;;')
+            writer.println('  esac')
+            writer.println('done')
+            writer.print('exec "')
+            writer.print(clangPath.absolutePath)
+            writer.print('" ')
+            writer.println('$filtered_args')
+        }
+        ccWrapper.setExecutable(true)
+        
+        // Create CXX wrapper that filters out -arch flags
+        def cxxWrapper = new File(wrapperDir, clangxx)
+        cxxWrapper.withWriter { writer ->
+            writer.println('#!/bin/sh')
+            writer.println('# Filter out macOS-specific -arch flags')
+            writer.println('filtered_args=""')
+            writer.println('skip_next=0')
+            writer.println('for arg in "$@"; do')
+            writer.println('  if [ $skip_next -eq 1 ]; then')
+            writer.println('    skip_next=0')
+            writer.println('    continue')
+            writer.println('  fi')
+            writer.println('  case "$arg" in')
+            writer.println('    -arch) skip_next=1; continue ;;')
+            writer.println('    -arch*) continue ;;')
+            writer.println('    *) filtered_args="$filtered_args $arg" ;;')
+            writer.println('  esac')
+            writer.println('done')
+            writer.print('exec "')
+            writer.print(clangxxPath.absolutePath)
+            writer.print('" ')
+            writer.println('$filtered_args')
+        }
+        cxxWrapper.setExecutable(true)
+        
+        // Determine target string (e.g., android-arm64)
+        def targetString = "android-${archConfig.arch == 'arm' ? 'arm' : (archConfig.arch == 'arm64' ? 'arm64' : 'x64')}"
+        
+        gypModules.each { modulePath ->
+            def moduleName = new File(modulePath).name
+            def moduleTaskName = "buildNativeModule_${moduleName.replaceAll('[^a-zA-Z0-9]', '_')}"
+            
+            tasks.register(moduleTaskName, Exec) {
+                group = 'capacitor-nodejs'
+                description = "Rebuilds native module: ${moduleName}"
+                
+                def originalProjectBin = "${nodeDirPath}/node_modules/.bin"
+                
+                // Call the rebuild script (similar to prebuild-for-nodejs-mobile)
+                commandLine 'node', rebuildScript.absolutePath, modulePath, targetString
+                
+                // Set npm config environment variables (must use npm_config_ prefix)
+                environment('npm_config_node_engine', 'v8')
+                environment('npm_config_nodedir', "${project.projectDir}/libnode/")
+                environment('npm_config_node_gyp', npmGypPath)
+                environment('npm_config_arch', archConfig.arch)
+                environment('npm_config_platform', 'android')
+                environment('npm_config_format', 'make-android')
+                
+                // Ensure nodejs-mobile-gyp is used instead of regular node-gyp
+                environment('NODE_GYP', npmGypPath)
+                
+                // Set PATH to include compiler wrappers first, then prebuilt toolchain and project bin
+                def pathParts = []
+                pathParts.add(wrapperDir.absolutePath) // Add compiler wrappers first
+                if (file(originalProjectBin).exists()) {
+                    pathParts.add(originalProjectBin)
+                }
+                pathParts.add(prebuiltBinDir.absolutePath)
+                pathParts.add(System.env.PATH ?: '')
+                environment('PATH', pathParts.join(File.pathSeparator))
+                
+                // Use modern NDK prebuilt toolchain directly
+                environment('ANDROID_NDK_HOME', ndkDirectory.absolutePath)
+                environment('ANDROID_NDK_ROOT', ndkDirectory.absolutePath)
+                
+                // Set compiler environment variables - use wrappers to filter macOS flags
+                environment('AR', arPath.absolutePath)
+                environment('CC', ccWrapper.absolutePath)
+                environment('CXX', cxxWrapper.absolutePath)
+                environment('LINK', cxxWrapper.absolutePath)
+                environment('STRIP', new File(prebuiltBinDir, "llvm-strip").absolutePath)
+                
+                // Set target architecture and API
+                environment('TARGET_ARCH', archConfig.arch)
+                environment('TARGET_API', targetApi.toString())
+                
+                // GYP defines for nodejs-mobile-gyp
+                environment('GYP_DEFINES', npmGypDefines)
+                
+                // Prevent macOS-specific flags from being passed
+                // Clear these to prevent Xcode/CLT from injecting macOS flags
+                environment('MACOSX_DEPLOYMENT_TARGET', '')
+                environment('SDKROOT', '')
+                environment('ARCHS', '')
+                environment('ARCH', '')
+                
+                // Force Android target
+                environment('OS', 'android')
+                environment('PLATFORM', 'android')
+                
+                doFirst {
+                    logger.info("capacitor-nodejs: Rebuilding native module: ${moduleName}")
+                    logger.info("capacitor-nodejs: Using rebuild script: ${rebuildScript.absolutePath}")
+                    logger.info("capacitor-nodejs: Using nodejs-mobile-gyp: ${npmGypPath}")
+                    logger.info("capacitor-nodejs: Using NDK toolchain: ${prebuiltBinDir.absolutePath}")
+                    logger.info("capacitor-nodejs: Target: ${targetString}, Architecture: ${archConfig.arch}, API: ${targetApi}")
+                }
+            }
+        }
+        
+        // Create aggregate task that depends on all module tasks
+        tasks.register('buildNativeModules') {
+            group = 'capacitor-nodejs'
+            description = 'Rebuilds all Node.js native modules for Android'
+            dependsOn tasks.matching { it.name.startsWith('buildNativeModule_') }
+            
+            doLast {
+                logger.info("capacitor-nodejs: Finished rebuilding ${gypModules.size()} native module(s)")
+            }
+        }
+        
+        // Make preBuild depend on buildNativeModules
+        tasks.named('preBuild').configure {
+            dependsOn 'buildNativeModules'
+        }
+    } else {
+        logger.warn('capacitor-nodejs: nodejs-mobile-gyp not found. Native modules will not be rebuilt.')
+    }
 }
