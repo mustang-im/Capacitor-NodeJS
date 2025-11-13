@@ -1,5 +1,6 @@
 # node files
 dist
+scripts/dist
 node_modules
 
 # iOS files
@@ -65,3 +66,4 @@ render.experimental.xml
 
 # Android Profiling
 *.hprof
+yarn.lock
