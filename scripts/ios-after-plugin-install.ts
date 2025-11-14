@@ -114,6 +114,121 @@ function getNodeGypPath(projectRoot: string): string {
 }
 
 /**
+ * Remove binaries and frameworks from the Embed Frameworks build phase
+ * that come from the nodeDir directory, as they can cause conflicts
+ */
+function removeBinariesFromEmbedFrameworks(
+  project: any,
+  target: any,
+  nodejsProjectPath: string
+): void {
+  try {
+    // Access the parsed project structure
+    const pbxproj = project.pbxproj || project;
+    
+    // Get all build phases for the target
+    const targetSection = pbxproj.pbxTargetSection();
+    const targetObj = targetSection[target.uuid];
+    if (!targetObj || !targetObj.buildPhases) {
+      console.log('No build phases found for target. Skipping binary removal.');
+      return;
+    }
+    
+    const buildPhases = targetObj.buildPhases;
+    
+    // Find the "Embed Frameworks" build phase (PBXCopyFilesBuildPhase with dstSubfolderSpec = 10)
+    let embedFrameworksPhaseId: string | null = null;
+    const copyFilesSection = pbxproj.pbxCopyFilesBuildPhaseSection();
+    
+    for (const phaseRef of buildPhases) {
+      const phaseId = phaseRef.value || phaseRef;
+      const phase = copyFilesSection[phaseId];
+      if (phase && (phase.dstSubfolderSpec === '10' || phase.dstSubfolderSpec === 10)) {
+        // dstSubfolderSpec = 10 means "Frameworks" folder
+        embedFrameworksPhaseId = phaseId;
+        break;
+      }
+    }
+    
+    if (!embedFrameworksPhaseId) {
+      console.log('No "Embed Frameworks" build phase found. Skipping binary removal.');
+      return;
+    }
+    
+    const embedFrameworksPhase = copyFilesSection[embedFrameworksPhaseId];
+    if (!embedFrameworksPhase) {
+      console.log('Embed Frameworks phase not found. Skipping binary removal.');
+      return;
+    }
+    
+    // Get the files in the embed frameworks phase
+    const files = embedFrameworksPhase.files || [];
+    const filesToRemove: string[] = [];
+    const fileReferenceSection = pbxproj.pbxFileReferenceSection();
+    const copyFilesFileSection = pbxproj.pbxCopyFilesBuildPhaseFileSection();
+    
+    // Patterns to match binaries/frameworks from nodeDir
+    const nodeDirPatterns = [
+      /\.framework$/i,           // .framework files
+      /\.node$/i,                // .node files
+      /\.a$/i,                   // Static library files
+      /nodejs/i,                 // Anything with "nodejs" in the path
+      /node_modules/i,           // Anything from node_modules
+    ];
+    
+    // Check each file in the embed frameworks phase
+    for (const fileRef of files) {
+      const fileRefId = fileRef.value || fileRef;
+      const file = copyFilesFileSection[fileRefId];
+      if (!file) continue;
+      
+      // Get the file reference
+      const fileRefObjId = file.fileRef;
+      const fileRefObj = fileReferenceSection[fileRefObjId];
+      if (!fileRefObj) continue;
+      
+      // Get the file path
+      const filePath = fileRefObj.path || '';
+      const fileName = fileRefObj.name || filePath;
+      
+      // Check if this file matches any of our patterns
+      const shouldRemove = nodeDirPatterns.some(pattern => 
+        pattern.test(filePath) || pattern.test(fileName)
+      );
+      
+      if (shouldRemove) {
+        filesToRemove.push(fileRefId);
+        console.log(`Removing ${fileName || filePath} from Embed Frameworks (detected in nodeDir)`);
+      }
+    }
+    
+    // Remove the files from the build phase
+    if (filesToRemove.length > 0) {
+      // Remove files from the phase
+      embedFrameworksPhase.files = files.filter((fileRef: any) => {
+        const fileRefId = fileRef.value || fileRef;
+        return !filesToRemove.includes(fileRefId);
+      });
+      
+      // Also remove the file reference entries from the copy files section
+      for (const fileRefId of filesToRemove) {
+        if (copyFilesFileSection[fileRefId]) {
+          delete copyFilesFileSection[fileRefId];
+        }
+      }
+      
+      console.log(`Removed ${filesToRemove.length} binary/framework file(s) from Embed Frameworks section.`);
+    } else {
+      console.log('No conflicting binaries/frameworks found in Embed Frameworks section.');
+    }
+  } catch (error) {
+    const err = error as Error;
+    console.warn(`Warning: Failed to remove binaries from Embed Frameworks: ${err.message}`);
+    // Don't fail the whole process if this fails
+  }
+}
+
+/**
  * Create the rebuild native modules build phase script
  */
 function createRebuildScript(
@@ -320,6 +435,10 @@ async function main(): Promise<void> {
     }
 
     console.log(`Using target: ${target.name || target.uuid || 'unknown'}`);
+
+    // Remove binaries/frameworks from Embed Frameworks section that come from nodeDir
+    // These can cause conflicts with the Node.js Mobile native module build process
+    removeBinariesFromEmbedFrameworks(project, target, nodejsProjectPath);
 
     // Create build phase scripts
     // Use relative path for the rebuild script
