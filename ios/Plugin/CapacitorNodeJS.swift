@@ -125,7 +125,7 @@ class CapacitorNodeJS {
             // Builtin modules are in the plugin's assets directory
             // Try plugin bundle first, then main bundle
             let modulesPath: String
-            if let pluginBundleURL = Bundle(for: type(of: self)).resourceURL,
+            if let pluginBundleURL = Bundle(for: CapacitorNodeJS.self).resourceURL,
                fileManager.fileExists(atPath: pluginBundleURL.appendingPathComponent("builtin_modules").path) {
                 modulesPath = pluginBundleURL.appendingPathComponent("builtin_modules").path
             } else if fileManager.fileExists(atPath: bundleResourceURL.appendingPathComponent("builtin_modules").path) {

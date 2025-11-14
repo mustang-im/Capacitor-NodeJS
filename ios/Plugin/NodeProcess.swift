@@ -47,15 +47,26 @@ class NodeProcess {
 
         // Convert Swift strings to C strings
         let argc = Int32(arguments.count)
-        var argv = arguments.map { strdup($0) }
+        var cStrings = arguments.map { strdup($0) }
         defer {
-            argv.forEach { free($0) }
+            cStrings.forEach { free($0) }
+        }
+
+        // Allocate array of pointers
+        let argv = UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>.allocate(capacity: Int(argc))
+        defer {
+            argv.deallocate()
+        }
+
+        // Copy pointers to the array
+        for (index, cString) in cStrings.enumerated() {
+            argv[index] = cString
         }
 
         // Start Node.js engine
         // Note: This requires the NodeMobile framework to be linked
         // The node_start function should be declared in the bridging header
-        node_start(argc, &argv)
+        node_start(argc, argv)
     }
 
     /// Send a message to the Node.js process
