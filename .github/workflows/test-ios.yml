@@ -1,10 +1,6 @@
 name: Test iOS Build
 
 on:
-  push:
-    branches: [ main, master, develop ]
-  pull_request:
-    branches: [ main, master, develop ]
   workflow_dispatch:
 
 jobs:
@@ -20,29 +16,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
         run: |
-          npm ci
-          npm run build
+          yarn install
+          yarn build
 
       - name: Setup test project
         run: |
           cd test-project
           # Create .npmrc to use local plugin
           echo "capacitor-nodejs=file:.." > .npmrc
-          npm install
+          yarn install
 
       - name: Build web app
         run: |
           cd test-project
-          npm run build
+          yarn build
 
       - name: Install Node.js project dependencies
         run: |
           cd test-project/static/nodejs
-          npm install
+          yarn install
 
       - name: Setup CocoaPods
         run: |
@@ -56,9 +51,9 @@ jobs:
           cd test-project
           # Ensure scripts are built
           cd ..
-          npm run build-scripts
+          yarn build-scripts
           cd test-project
-          npx cap sync ios
+          yarn cap sync ios
         env:
           CAPACITOR_PLATFORM_NAME: ios
 
