@@ -1,6 +1,6 @@
 /**
- * Main hook script that runs after Capacitor copy
- * This script orchestrates multiple post-copy tasks:
+ * Main hook script that runs after Capacitor sync
+ * This script orchestrates multiple post-sync tasks:
  * 1. Fetch libnode for Android/iOS
  * 2. Setup iOS build phases for native module rebuilding
  * 

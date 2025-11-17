@@ -52,7 +52,7 @@
     "watch": "tsc --watch",
     "pack:bridge": "cd assets/types/bridge && npm pack --pack-destination ../ && mv ../types-bridge-*.tgz ../bridge.tgz",
     "pack": "npm run pack:bridge && npm pack",
-    "capacitor:copy:after": "node scripts/dist/after-copy.js",
+    "capacitor:sync:after": "node scripts/dist/after-sync.js",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

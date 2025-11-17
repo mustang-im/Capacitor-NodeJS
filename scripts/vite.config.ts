@@ -67,13 +67,13 @@ function makeScriptsExecutable(): Plugin {
 }
 
 const scriptInputs = {
-  'after-copy': resolve(__dirname, 'after-copy.ts'),
-  'fetch-libnode': resolve(__dirname, 'fetch-libnode.ts'),
-  'rebuild-native-module': resolve(__dirname, 'rebuild-native-module.ts'),
-  'ios-after-plugin-install': resolve(__dirname, 'ios-after-plugin-install.ts'),
-  'ios-create-plists-and-dlopen-override': resolve(__dirname, 'ios-create-plists-and-dlopen-override.ts'),
-  'create-frameworks-and-override': resolve(__dirname, 'create-frameworks-and-override.ts'),
-  'override-dlopen-paths-preload': resolve(__dirname, 'override-dlopen-paths-preload.ts'),
+  'after-sync': resolve(__dirname, 'common/after-sync.ts'),
+  'fetch-libnode': resolve(__dirname, 'common/fetch-libnode.ts'),
+  'rebuild-native-module': resolve(__dirname, 'ios/rebuild-native-module.ts'),
+  'ios-after-plugin-install': resolve(__dirname, 'ios/ios-after-plugin-install.ts'),
+  'ios-create-plists-and-dlopen-override': resolve(__dirname, 'ios/ios-create-plists-and-dlopen-override.ts'),
+  'create-frameworks-and-override': resolve(__dirname, 'ios/create-frameworks-and-override.ts'),
+  'override-dlopen-paths-preload': resolve(__dirname, 'ios/override-dlopen-paths-preload.ts'),
 };
 
 export default defineConfig({
@@ -81,15 +81,15 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: 'rebuild-native-modules.sh',
+          src: 'ios/rebuild-native-modules.sh',
           dest: '.',
         },
         {
-          src: 'sign-native-modules.sh',
+          src: 'ios/sign-native-modules.sh',
           dest: '.',
         },
         {
-          src: 'ios-xcframework-info-plist.template.xml',
+          src: 'ios/ios-xcframework-info-plist.template.xml',
           dest: '.',
         },
       ],

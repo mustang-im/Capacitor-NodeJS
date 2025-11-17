@@ -13,7 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import xcode from 'xcode';
-import { findCapacitorConfig, findCapacitorProjectRoot, getPluginSettings } from './config-utils.js';
+import { findCapacitorConfig, findCapacitorProjectRoot, getPluginSettings } from '../common/config-utils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
