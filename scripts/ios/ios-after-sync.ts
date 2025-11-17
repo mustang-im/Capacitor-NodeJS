@@ -6,7 +6,7 @@
  * 1. Build Node.js Mobile Native Modules - Rebuilds native modules using rebuild-native-module.js
  * 2. Sign Node.js Mobile Native Modules - Signs and embeds the resulting frameworks
  *
- * Usage: This script is typically run as a Capacitor hook after plugin installation
+ * Usage: This script is run as a Capacitor hook after sync (capacitor:copy:after)
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -26,13 +26,29 @@ async function fixXcframeworkPath(projectRoot: string, iosPath: string): Promise
   try {
     // Framework is at plugin/ios/libnode/NodeMobile.xcframework
     // When plugin is installed, it's at node_modules/capacitor-nodejs/ios/libnode/NodeMobile.xcframework
-    // Pods project is at ios/App/Pods/Pods.xcodeproj/project.pbxproj
+    // Pods project can be at:
+    //   - ios/App/Pods/Pods.xcodeproj/project.pbxproj (Capacitor default)
+    //   - ios/Pods/Pods.xcodeproj/project.pbxproj (alternative location)
     // Relative path from Pods project to framework: ../../../node_modules/capacitor-nodejs/ios/libnode/NodeMobile.xcframework
 
-    const podsProjectPath = join(iosPath, 'Pods', 'Pods.xcodeproj', 'project.pbxproj');
-    if (!existsSync(podsProjectPath)) {
-      console.warn(`Pods project not found at: ${podsProjectPath}`);
-      console.warn('Run pod install first.');
+    // Try multiple possible Pods locations
+    const possiblePodsPaths = [
+      join(iosPath, 'Pods', 'Pods.xcodeproj', 'project.pbxproj'), // ios/App/Pods
+      join(projectRoot, 'ios', 'Pods', 'Pods.xcodeproj', 'project.pbxproj'), // ios/Pods
+    ];
+
+    let podsProjectPath: string | null = null;
+    for (const path of possiblePodsPaths) {
+      if (existsSync(path)) {
+        podsProjectPath = path;
+        break;
+      }
+    }
+
+    if (!podsProjectPath) {
+      console.warn(`Pods project not found at any of the expected locations:`);
+      possiblePodsPaths.forEach(path => console.warn(`  - ${path}`));
+      console.warn('This is OK if pod install has not been run yet. Run pod install first.');
       return;
     }
 
@@ -59,11 +75,19 @@ async function fixXcframeworkPath(projectRoot: string, iosPath: string): Promise
 
 /**
  * Find iOS project path from Capacitor project root
+ * Checks multiple possible locations for iOS project
  */
 function findIOSProjectPath(projectRoot: string): string | null {
-  const iosPath = join(projectRoot, 'ios', 'App');
-  if (existsSync(iosPath)) {
-    return iosPath;
+  // Try multiple possible iOS project locations
+  const possibleIOSPaths = [
+    join(projectRoot, 'ios', 'App'), // Standard Capacitor location
+    join(projectRoot, 'ios'), // Alternative location
+  ];
+
+  for (const iosPath of possibleIOSPaths) {
+    if (existsSync(iosPath)) {
+      return iosPath;
+    }
   }
   return null;
 }
@@ -145,12 +169,12 @@ async function main(): Promise<void> {
     const iosPath = findIOSProjectPath(projectRoot);
     if (!iosPath) {
       console.warn(`iOS project not found. Searched from: ${projectRoot}`);
-      console.warn('Skipping iOS hook setup.');
+      console.warn('Skipping iOS sync setup.');
       return;
     }
     const xcodeprojDir = findXcodeProject(iosPath);
     if (!xcodeprojDir) {
-      console.warn('Xcode project file not found. Skipping iOS hook setup.');
+      console.warn('Xcode project file not found. Skipping iOS sync setup.');
       return;
     }
 
@@ -168,7 +192,7 @@ async function main(): Promise<void> {
     // Load Xcode project using xcode package
     const pbxprojFile = join(xcodeprojDir, 'project.pbxproj');
     if (!existsSync(pbxprojFile)) {
-      console.warn('project.pbxproj file not found. Skipping iOS hook setup.');
+      console.warn('project.pbxproj file not found. Skipping iOS sync setup.');
       return;
     }
 
@@ -187,7 +211,7 @@ async function main(): Promise<void> {
     // Get the first target (usually "App")
     const target = project.getFirstTarget();
     if (!target) {
-      console.warn('No targets found in Xcode project. Skipping iOS hook setup.');
+      console.warn('No targets found in Xcode project. Skipping iOS sync setup.');
       return;
     }
 
@@ -287,11 +311,11 @@ async function main(): Promise<void> {
     if (!fileUpdatedDirectly) {
       writeFileSync(pbxprojFile, project.writeSync());
     }
-    console.log('iOS hook setup completed successfully.');
+    console.log('iOS sync setup completed successfully.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;
-    console.error(`Error setting up iOS hooks: ${message}`);
+    console.error(`Error setting up iOS sync: ${message}`);
     if (stack) {
       console.error(`Error stack: ${stack}`);
     }

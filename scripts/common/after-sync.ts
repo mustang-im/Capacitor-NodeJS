@@ -44,15 +44,15 @@ async function main(): Promise<void> {
     // Scripts are all in the same directory (dist), so use __dirname directly
     const scriptsDir = __dirname;
 
-    // Always run fetch-libnode (handles both Android and iOS)
-    console.log('Running fetch-libnode script...');
-    await runScript(resolve(scriptsDir, 'fetch-libnode.js'), []);
+    // Run fetch-libnode for the specific platform
+    console.log(`Running fetch-libnode script for platform: ${platform}...`);
+    await runScript(resolve(scriptsDir, 'fetch-libnode.js'), ['--platform', platform]);
 
     // Run iOS setup script only for iOS or both platforms
     if (platform === 'ios' || platform === 'both') {
-      console.log('Running iOS after-plugin-install script...');
+      console.log('Running iOS after-sync script...');
       try {
-        await runScript(resolve(scriptsDir, 'ios-after-plugin-install.js'), []);
+        await runScript(resolve(scriptsDir, 'ios-after-sync.js'), []);
       } catch (error) {
         // Don't fail the whole process if iOS setup fails
         // This might happen if iOS project doesn't exist yet
@@ -61,10 +61,10 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log('Post-copy hooks completed successfully.');
+    console.log('Post-sync hooks completed successfully.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('Error running post-copy hooks:', message);
+    console.error('Error running post-sync hooks:', message);
     process.exit(1);
   }
 }
