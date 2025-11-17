@@ -70,7 +70,7 @@ const scriptInputs = {
   'before-sync': resolve(__dirname, 'common/before-sync.ts'),
   'after-sync': resolve(__dirname, 'common/after-sync.ts'),
   'fetch-libnode': resolve(__dirname, 'common/fetch-libnode.ts'),
-  'rebuild-native-module': resolve(__dirname, 'ios/rebuild-native-module.ts'),
+  'rebuild-native-module': resolve(__dirname, 'common/rebuild-native-module.ts'),
   'ios-after-sync': resolve(__dirname, 'ios/ios-after-sync.ts'),
   'ios-create-plists-and-dlopen-override': resolve(__dirname, 'ios/ios-create-plists-and-dlopen-override.ts'),
   'create-frameworks-and-override': resolve(__dirname, 'ios/create-frameworks-and-override.ts'),
