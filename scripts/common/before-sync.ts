@@ -1,9 +1,8 @@
 /**
- * Hook script that runs after Capacitor sync
- * This script sets up iOS build phases and fixes framework paths
- * Note: Framework download happens in before-sync.ts (runs before pod install)
+ * Hook script that runs before Capacitor sync
+ * This script downloads the libnode framework BEFORE pod install runs
  * 
- * This script is run automatically by Capacitor via the capacitor:sync:after hook
+ * This script is run automatically by Capacitor via the capacitor:sync:before hook
  */
 
 import { spawn } from 'node:child_process';
@@ -43,24 +42,15 @@ async function main(): Promise<void> {
     // Scripts are all in the same directory (dist), so use __dirname directly
     const scriptsDir = __dirname;
 
-    // Run iOS setup script only for iOS or both platforms
-    // This runs AFTER sync/pod install, so Pods project exists
-    if (platform === 'ios' || platform === 'both') {
-      console.log('Running iOS after-sync script...');
-      try {
-        await runScript(resolve(scriptsDir, 'ios-after-sync.js'), []);
-      } catch (error) {
-        // Don't fail the whole process if iOS setup fails
-        // This might happen if iOS project doesn't exist yet
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`iOS setup script failed (this is OK if iOS project doesn't exist): ${message}`);
-      }
-    }
+    // Download libnode framework BEFORE sync/pod install runs
+    // This ensures the framework exists when the podspec is processed
+    console.log(`Downloading libnode framework for platform: ${platform}...`);
+    await runScript(resolve(scriptsDir, 'fetch-libnode.js'), ['--platform', platform]);
 
-    console.log('Post-sync hooks completed successfully.');
+    console.log('Pre-sync hooks completed successfully.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('Error running post-sync hooks:', message);
+    console.error('Error running pre-sync hooks:', message);
     process.exit(1);
   }
 }

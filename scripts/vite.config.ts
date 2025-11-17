@@ -67,6 +67,7 @@ function makeScriptsExecutable(): Plugin {
 }
 
 const scriptInputs = {
+  'before-sync': resolve(__dirname, 'common/before-sync.ts'),
   'after-sync': resolve(__dirname, 'common/after-sync.ts'),
   'fetch-libnode': resolve(__dirname, 'common/fetch-libnode.ts'),
   'rebuild-native-module': resolve(__dirname, 'ios/rebuild-native-module.ts'),

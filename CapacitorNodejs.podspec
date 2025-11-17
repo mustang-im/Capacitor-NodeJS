@@ -17,6 +17,7 @@ Pod::Spec.new do |s|
 
   # Link against NodeMobile framework
   # The framework is at ios/libnode/NodeMobile.xcframework (relative to podspec location)
+  # The framework is downloaded by the capacitor:sync:before hook before pod install runs
   s.vendored_frameworks = 'ios/libnode/NodeMobile.xcframework'
   s.pod_target_xcconfig = {
     'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/ios/libnode"',
