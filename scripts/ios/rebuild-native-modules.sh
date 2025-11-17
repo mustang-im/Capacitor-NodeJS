@@ -73,12 +73,44 @@ fi
 # Rebuild modules for each architecture
 pushd "$NODEJS_DIR/" > /dev/null
 
+# Determine target architecture based on platform
 if [ "$PLATFORM_NAME" == "iphoneos" ]; then
   # Device build - arm64
-  GYP_DEFINES="OS=ios" npm_config_nodedir="$NODEJS_HEADERS_DIR" npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" npm_config_platform="ios" npm_config_format="make-ios" npm_config_node_engine="chakracore" npm_config_arch="arm64" node "${REBUILD_SCRIPT_PATH}" "$NODEJS_DIR/" "ios-arm64" || true
+  TARGET_ARCH="ios-arm64"
 else
   # Simulator build - x64
-  GYP_DEFINES="OS=ios" npm_config_nodedir="$NODEJS_HEADERS_DIR" npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" npm_config_platform="ios" npm_config_format="make-ios" npm_config_node_engine="chakracore" npm_config_arch="x64" node "${REBUILD_SCRIPT_PATH}" "$NODEJS_DIR/" "ios-x64" || true
+  TARGET_ARCH="ios-x64"
+fi
+
+# Find all native modules (those with binding.gyp or *.gyp files) and rebuild them
+# Search in node_modules directory
+NODE_MODULES_DIR="$NODEJS_DIR/node_modules"
+if [ -d "$NODE_MODULES_DIR" ]; then
+  # Find all directories with binding.gyp or *.gyp files
+  # binding.gyp is the standard file name for GYP-based native modules
+  find "$NODE_MODULES_DIR" \( -name "binding.gyp" -o -name "*.gyp" \) -type f | while read -r gypfile; do
+    # Get the directory containing the .gyp file (the module directory)
+    MODULE_DIR=$(dirname "$gypfile")
+    
+    # Skip if it's a nested node_modules (only process direct dependencies)
+    # Also skip if we've already processed this module (avoid duplicates)
+    if [[ "$MODULE_DIR" != *"/node_modules/node_modules/"* ]] && [ -f "$MODULE_DIR/package.json" ]; then
+      MODULE_NAME=$(basename "$MODULE_DIR")
+      echo "Rebuilding native module: $MODULE_NAME ($MODULE_DIR) for $TARGET_ARCH"
+      GYP_DEFINES="OS=ios" \
+      npm_config_nodedir="$NODEJS_HEADERS_DIR" \
+      npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
+      npm_config_platform="ios" \
+      npm_config_format="make-ios" \
+      npm_config_node_engine="chakracore" \
+      npm_config_arch="${TARGET_ARCH#ios-}" \
+      node "${REBUILD_SCRIPT_PATH}" "$MODULE_DIR" "$TARGET_ARCH" || {
+        echo "Warning: Failed to rebuild $MODULE_NAME, continuing with other modules..."
+      }
+    fi
+  done
+else
+  echo "Warning: node_modules directory not found at $NODE_MODULES_DIR"
 fi
 
 popd > /dev/null
