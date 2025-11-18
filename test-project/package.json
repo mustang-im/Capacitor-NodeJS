@@ -13,13 +13,12 @@
     "ios:build": "cap sync ios && cd ios/App && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -destination 'generic/platform=iOS' clean build"
   },
   "dependencies": {
-    "@capacitor/core": "^7.0.0",
     "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
     "@capacitor/ios": "^7.0.0",
-    "capacitor-nodejs": "file:../capacitor-nodejs-1.0.0-beta.11.tgz"
+    "capacitor-nodejs": "file:../capacitor-nodejs-*.tgz"
   },
   "devDependencies": {
     "vite": "^5.0.0"
   }
 }
-

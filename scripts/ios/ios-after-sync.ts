@@ -142,19 +142,11 @@ function generateUuid(): string {
  * Note: We do NOT escape dollar signs because they're needed for shell variables
  */
 function escapeScriptForPbxproj(script: string): string {
-  // Escape in the order that matters:
-  // 1. Backslashes first (so we don't double-escape)
-  // 2. Quotes
-  // 3. Newlines (convert to \n)
-  // 4. Tabs (convert to \t)
-  // Note: Dollar signs are NOT escaped - they're needed for shell variables like $NODE_MODULES_DIR
-  return script
-    .replace(/\\/g, '\\\\')  // Escape backslashes first
-    .replace(/"/g, '\\"')     // Escape quotes
-    .replace(/\t/g, '\\t')     // Escape tabs
-    .replace(/\r\n/g, '\\n')  // Convert Windows line endings
-    .replace(/\r/g, '\\n')    // Convert old Mac line endings
-    .replace(/\n/g, '\\n');   // Convert Unix line endings
+  // Use JSON.stringify to properly escape the script for project.pbxproj format
+  // JSON.stringify will correctly escape all backslashes, quotes, and special characters
+  // Then remove the outer quotes that JSON.stringify adds
+  const jsonEscaped = JSON.stringify(script);
+  return jsonEscaped.slice(1, -1);
 }
 
 /**
@@ -268,12 +260,10 @@ async function main(): Promise<void> {
 
     let fileUpdatedDirectly = false;
 
-    // Handle rebuild phase - write directly to project file to ensure proper escaping
-    // The xcode package doesn't properly escape scripts, so we write it manually
+    // Handle rebuild phase - use xcode package like the original nodejs-mobile-cordova does
+    // The script no longer uses escaped parentheses, so no manual escaping fix needed
     if (!rebuildPhaseExists) {
-      const escapedRebuildScript = escapeScriptForPbxproj(rebuildScript);
-      
-      // Use xcode package to add the phase, but then manually fix the escaping
+      // Use xcode package to add the phase (like the original code does)
       project.addBuildPhase(
         [],
         'PBXShellScriptBuildPhase',
@@ -285,21 +275,9 @@ async function main(): Promise<void> {
         }
       );
       
-      // Write the project and then fix the escaping
+      // Write the project using xcode package (like the original)
       writeFileSync(pbxprojFile, project.writeSync());
-      let updatedContent = readFileSync(pbxprojFile, 'utf8');
-      
-      // Find and fix the rebuild phase script escaping
-      // Match the build phase with shellScript - need to match everything until the closing quote
-      // The script might span multiple lines, so we need to match newlines too
-      const rebuildPhaseRegex = /(([A-F0-9]{24}) \/\* Build Node\.js Mobile Native Modules \*\/ = \{[\s\S]*?shellScript = ")([\s\S]*?)(";[\s\S]*?\};)/;
-      updatedContent = updatedContent.replace(rebuildPhaseRegex, (match, prefix, uuid, script, suffix) => {
-        // Replace the entire script content with properly escaped version
-        return prefix + escapedRebuildScript + suffix;
-      });
-      
-      writeFileSync(pbxprojFile, updatedContent);
-      pbxprojContent = updatedContent;
+      pbxprojContent = readFileSync(pbxprojFile, 'utf8');
       fileUpdatedDirectly = true;
       console.log('Added build phase: Build Node.js Mobile Native Modules');
     } else {
@@ -307,38 +285,37 @@ async function main(): Promise<void> {
     }
 
     if (!signPhaseExists) {
-      const escapedSignScript = escapeScriptForPbxproj(signScript);
-      
-      // Use xcode package to add the phase, but then manually fix the escaping
-      project.addBuildPhase(
-        [],
-        'PBXShellScriptBuildPhase',
-        'Sign Node.js Mobile Native Modules',
-        target.uuid,
-        {
-          shellScript: signScript,
-          shellPath: '/bin/sh',
-        }
-      );
-      
-      // Write the project and then fix the escaping
+      // Use xcode package to add the phase (like the original code does)
       if (!fileUpdatedDirectly) {
+        // Reload project if we haven't updated it yet
+        const reloadedProject = xcode.project(pbxprojFile);
+        reloadedProject.parseSync();
+        reloadedProject.addBuildPhase(
+          [],
+          'PBXShellScriptBuildPhase',
+          'Sign Node.js Mobile Native Modules',
+          target.uuid,
+          {
+            shellScript: signScript,
+            shellPath: '/bin/sh',
+          }
+        );
+        writeFileSync(pbxprojFile, reloadedProject.writeSync());
+      } else {
+        project.addBuildPhase(
+          [],
+          'PBXShellScriptBuildPhase',
+          'Sign Node.js Mobile Native Modules',
+          target.uuid,
+          {
+            shellScript: signScript,
+            shellPath: '/bin/sh',
+          }
+        );
         writeFileSync(pbxprojFile, project.writeSync());
-        pbxprojContent = readFileSync(pbxprojFile, 'utf8');
       }
       
-      // Find and fix the sign phase script escaping
-      // Match the build phase with shellScript - need to match everything until the closing quote
-      // The script might span multiple lines, so we need to match newlines too
-      const signPhaseRegex = /(([A-F0-9]{24}) \/\* Sign Node\.js Mobile Native Modules \*\/ = \{[\s\S]*?shellScript = ")([\s\S]*?)(";[\s\S]*?\};)/;
-      let updatedContent = pbxprojContent;
-      updatedContent = updatedContent.replace(signPhaseRegex, (match, prefix, uuid, script, suffix) => {
-        // Replace the entire script content with properly escaped version
-        return prefix + escapedSignScript + suffix;
-      });
-      
-      writeFileSync(pbxprojFile, updatedContent);
-      pbxprojContent = updatedContent;
+      pbxprojContent = readFileSync(pbxprojFile, 'utf8');
       fileUpdatedDirectly = true;
       console.log('Added build phase: Sign Node.js Mobile Native Modules');
     } else {
