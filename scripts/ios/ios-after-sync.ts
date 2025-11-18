@@ -129,54 +129,71 @@ function getNodeGypPath(projectRoot: string): string {
 }
 
 /**
- * Generate a 24-character hexadecimal UUID for Xcode project files
+ * Get rebuild shell script path relative to Xcode project
  */
-function generateUuid(): string {
-  return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join('').toUpperCase();
+function getRebuildShellScriptPath(): string {
+  // Script is in scripts/dist/rebuild-native-modules.sh
+  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.sh
+  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.sh
+  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'rebuild-native-modules.sh');
 }
 
 /**
- * Escape script for embedding in Xcode project.pbxproj file
- * The project.pbxproj format requires specific escaping for shell scripts
- * The script must be on a single line with \n for newlines
- * Note: We do NOT escape dollar signs because they're needed for shell variables
+ * Get sign shell script path relative to Xcode project
  */
-function escapeScriptForPbxproj(script: string): string {
-  // Use JSON.stringify to properly escape the script for project.pbxproj format
-  // JSON.stringify will correctly escape all backslashes, quotes, and special characters
-  // Then remove the outer quotes that JSON.stringify adds
-  const jsonEscaped = JSON.stringify(script);
-  return jsonEscaped.slice(1, -1);
+function getSignShellScriptPath(): string {
+  // Script is in scripts/dist/sign-native-modules.sh
+  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.sh
+  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.sh
+  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'sign-native-modules.sh');
 }
 
 /**
- * Create rebuild script content by reading from shell script file and injecting variables
+ * Escape a value for use in a shell script string (handles quotes and backslashes)
+ * Note: We don't escape dollar signs as they may be needed for variable substitution
+ * and are safe inside double quotes when used as literal values
  */
-function createRebuildScript(rebuildScriptPathRel: string, nodeGypPath: string, nodeDir: string): string {
-  // Read the shell script template
-  const scriptPath = join(__dirname, 'rebuild-native-modules.sh');
-  let script = readFileSync(scriptPath, 'utf8');
+function escapeShellValue(value: string): string {
+  // Replace backslashes and quotes with escaped versions
+  // Dollar signs are safe inside double quotes when used as literal values
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
 
-  // Inject variables
-  script = script.replace(/\$\{NODE_DIR:-nodejs\}/g, nodeDir);
-  script = script.replace(/\$\{NODEJS_MOBILE_GYP_BIN_FILE\}/g, nodeGypPath);
-  script = script.replace(/\$\{REBUILD_SCRIPT_PATH\}/g, rebuildScriptPathRel);
-
+/**
+ * Create rebuild build phase script that sets environment variables and executes external script
+ * The script points to the external .sh file instead of embedding content
+ */
+function createRebuildBuildPhaseScript(rebuildScriptPathRel: string, nodeGypPath: string, nodeDir: string, shellScriptPath: string): string {
+  // Create a script that sets environment variables and executes the external script file
+  // Escape paths to handle special characters
+  const escapedNodeDir = escapeShellValue(nodeDir);
+  const escapedNodeGypPath = escapeShellValue(nodeGypPath);
+  const escapedRebuildScriptPath = escapeShellValue(rebuildScriptPathRel);
+  const escapedShellScriptPath = escapeShellValue(shellScriptPath);
+  
+  const script = `export NODE_DIR="${escapedNodeDir}"
+export NODEJS_MOBILE_GYP_BIN_FILE="${escapedNodeGypPath}"
+export REBUILD_SCRIPT_PATH="${escapedRebuildScriptPath}"
+sh "${escapedShellScriptPath}"`;
   return script;
 }
 
 /**
- * Create sign script content by reading from shell script file and injecting variables
+ * Create sign build phase script that sets environment variables and executes external script
+ * The script points to the external .sh file instead of embedding content
  */
-function createSignScript(nodeDir: string, pluginScriptsPath: string): string {
-  // Read the shell script template
-  const scriptPath = join(__dirname, 'sign-native-modules.sh');
-  let script = readFileSync(scriptPath, 'utf8');
-
-  // Inject variables
-  script = script.replace(/\$\{NODE_DIR:-nodejs\}/g, nodeDir);
-  script = script.replace(/\$\{PLUGIN_SCRIPTS_PATH\}/g, pluginScriptsPath);
-
+function createSignBuildPhaseScript(nodeDir: string, pluginScriptsPath: string, shellScriptPath: string): string {
+  // Create a script that sets environment variables and executes the external script file
+  // Escape paths to handle special characters
+  const escapedNodeDir = escapeShellValue(nodeDir);
+  const escapedPluginScriptsPath = escapeShellValue(pluginScriptsPath);
+  const escapedShellScriptPath = escapeShellValue(shellScriptPath);
+  
+  const script = `export NODE_DIR="${escapedNodeDir}"
+export PLUGIN_SCRIPTS_PATH="${escapedPluginScriptsPath}"
+sh "${escapedShellScriptPath}"`;
   return script;
 }
 
@@ -245,141 +262,89 @@ async function main(): Promise<void> {
     // Get plugin scripts path (relative to Xcode project)
     const pluginScriptsPath = join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist');
 
-    // Create build phase scripts
-    // Use relative path for the rebuild script
-    const rebuildScript = createRebuildScript(rebuildScriptPathRel, nodeGypPath, nodeDir);
-    const signScript = createSignScript(nodeDir, pluginScriptsPath);
+    // Get shell script paths (relative to Xcode project)
+    const rebuildShellScriptPath = getRebuildShellScriptPath();
+    const signShellScriptPath = getSignShellScriptPath();
 
-    // Check if build phases already exist (check for various possible names)
-    let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
-    const rebuildPhaseExists = pbxprojContent.includes('Build Node.js Mobile Native Modules') ||
-                               pbxprojContent.includes('Rebuild Node.js Native Modules');
-    const signPhaseExists = pbxprojContent.includes('Sign Node.js Mobile Native Modules') ||
-                           pbxprojContent.includes('Code Sign Node Native Modules') ||
-                           pbxprojContent.includes('Code Sign Node.js Native Modules');
+    // Create build phase scripts that set environment variables and execute external scripts
+    // These scripts point to the external .sh files instead of embedding content
+    const rebuildScript = createRebuildBuildPhaseScript(rebuildScriptPathRel, nodeGypPath, nodeDir, rebuildShellScriptPath);
+    const signScript = createSignBuildPhaseScript(nodeDir, pluginScriptsPath, signShellScriptPath);
 
-    let fileUpdatedDirectly = false;
+    /**
+     * Add or update a build phase with the given script
+     */
+    function addOrUpdateBuildPhase(phaseName: string, script: string, possibleNames: string[]): void {
+      let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
+      const phaseExists = possibleNames.some(name => pbxprojContent.includes(name));
 
-    // Handle rebuild phase - use xcode package like the original nodejs-mobile-cordova does
-    // The script no longer uses escaped parentheses, so no manual escaping fix needed
-    if (!rebuildPhaseExists) {
-      // Use xcode package to add the phase (like the original code does)
-      project.addBuildPhase(
-        [],
-        'PBXShellScriptBuildPhase',
-        'Build Node.js Mobile Native Modules',
-        target.uuid,
-        {
-          shellScript: rebuildScript,
-          shellPath: '/bin/sh',
-        }
-      );
-      
-      // Write the project using xcode package (like the original)
-      writeFileSync(pbxprojFile, project.writeSync());
-      pbxprojContent = readFileSync(pbxprojFile, 'utf8');
-      fileUpdatedDirectly = true;
-      console.log('Added build phase: Build Node.js Mobile Native Modules');
-    } else {
-      console.log('Build phase already exists: Build Node.js Mobile Native Modules');
-    }
-
-    if (!signPhaseExists) {
-      // Use xcode package to add the phase (like the original code does)
-      if (!fileUpdatedDirectly) {
-        // Reload project if we haven't updated it yet
-        const reloadedProject = xcode.project(pbxprojFile);
-        reloadedProject.parseSync();
-        reloadedProject.addBuildPhase(
-          [],
-          'PBXShellScriptBuildPhase',
-          'Sign Node.js Mobile Native Modules',
-          target.uuid,
-          {
-            shellScript: signScript,
-            shellPath: '/bin/sh',
-          }
-        );
-        writeFileSync(pbxprojFile, reloadedProject.writeSync());
-      } else {
+      if (!phaseExists) {
+        // Add new build phase
         project.addBuildPhase(
           [],
           'PBXShellScriptBuildPhase',
-          'Sign Node.js Mobile Native Modules',
+          phaseName,
           target.uuid,
           {
-            shellScript: signScript,
+            shellScript: script,
             shellPath: '/bin/sh',
           }
         );
         writeFileSync(pbxprojFile, project.writeSync());
-      }
-      
-      pbxprojContent = readFileSync(pbxprojFile, 'utf8');
-      fileUpdatedDirectly = true;
-      console.log('Added build phase: Sign Node.js Mobile Native Modules');
-    } else {
-      // Update existing sign phase with the new script
-      console.log('Build phase already exists: Sign Node.js Mobile Native Modules - updating script');
-      // Find and update ALL code sign phases (both old and new names)
-      let updatedContent = pbxprojContent;
-
-      // Update both "Code Sign Node Native Modules" and "Sign Node.js Mobile Native Modules" phases
-      // Match the phase definition more precisely - the shellScript is on one line with escaped newlines
-      // Match from the UUID to the end of shellScript
-      const phaseUpdateRegex = /((?:BFB3ED892E8365590007C670|53658CB2EE144605B9DBE77D) \/\* (?:Code Sign Node Native Modules|Sign Node\.js Mobile Native Modules) \*\/ = \{[\s\S]*?shellScript = ")[^"]*(";[\s\S]*?\};)/g;
-
-      updatedContent = updatedContent.replace(phaseUpdateRegex, (match, prefix, suffix) => {
-        // Escape the script properly for the project.pbxproj format
-        const escapedScript = escapeScriptForPbxproj(signScript);
-        return prefix + escapedScript + suffix;
-      });
-
-      if (updatedContent !== pbxprojContent) {
-        writeFileSync(pbxprojFile, updatedContent);
-        console.log('Updated existing code sign build phase(s) with dlopen override and code signing');
-        fileUpdatedDirectly = true;
+        console.log(`Added build phase: ${phaseName}`);
       } else {
-        console.log('Could not update existing phase, adding new one');
-        const escapedSignScript = escapeScriptForPbxproj(signScript);
+        // Update existing build phase - find and replace the script content
+        // Since the script is now short (just env vars + script call), we can use a simpler approach
+        const escapedScript = JSON.stringify(script).slice(1, -1);
         
-        project.addBuildPhase(
-          [],
-          'PBXShellScriptBuildPhase',
-          'Sign Node.js Mobile Native Modules',
-          target.uuid,
-          {
-            shellScript: signScript,
-            shellPath: '/bin/sh',
-          }
+        // Escape phase names for regex
+        const possibleNamesEscaped = possibleNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+        
+        // Match any of the possible phase names and update the shellScript
+        // Pattern: UUID /* Phase Name */ = { ... shellScript = "old script" ... };
+        const updateRegex = new RegExp(
+          `((?:[A-F0-9]{24}) \\/\\* (?:${possibleNamesEscaped}) \\*\\/ = \\{[\\s\\S]*?shellScript = ")[^"]*(";[\\s\\S]*?\\};)`,
+          'g'
         );
-        
-        // Write the project and then fix the escaping
-        if (!fileUpdatedDirectly) {
-          writeFileSync(pbxprojFile, project.writeSync());
-          pbxprojContent = readFileSync(pbxprojFile, 'utf8');
-        }
-        
-        // Find and fix the sign phase script escaping
-        // Match the build phase with shellScript - need to match everything until the closing quote
-        // The script might span multiple lines, so we need to match newlines too
-        const signPhaseRegex = /(([A-F0-9]{24}) \/\* Sign Node\.js Mobile Native Modules \*\/ = \{[\s\S]*?shellScript = ")([\s\S]*?)(";[\s\S]*?\};)/;
-        let updatedContent = pbxprojContent;
-        updatedContent = updatedContent.replace(signPhaseRegex, (match, prefix, uuid, script, suffix) => {
-          // Replace the entire script content with properly escaped version
-          return prefix + escapedSignScript + suffix;
+
+        const updatedContent = pbxprojContent.replace(updateRegex, (match, prefix, suffix) => {
+          return prefix + escapedScript + suffix;
         });
-        
-        writeFileSync(pbxprojFile, updatedContent);
-        pbxprojContent = updatedContent;
-        fileUpdatedDirectly = true;
+
+        if (updatedContent !== pbxprojContent) {
+          writeFileSync(pbxprojFile, updatedContent);
+          console.log(`Updated existing build phase: ${phaseName}`);
+        } else {
+          // If regex didn't match, add a new phase
+          project.addBuildPhase(
+            [],
+            'PBXShellScriptBuildPhase',
+            phaseName,
+            target.uuid,
+            {
+              shellScript: script,
+              shellPath: '/bin/sh',
+            }
+          );
+          writeFileSync(pbxprojFile, project.writeSync());
+          console.log(`Added build phase (existing phase not found): ${phaseName}`);
+        }
       }
     }
 
-    // Only write if we didn't update the file directly
-    if (!fileUpdatedDirectly) {
-      writeFileSync(pbxprojFile, project.writeSync());
-    }
+    // Add or update rebuild phase
+    addOrUpdateBuildPhase(
+      'Build Node.js Mobile Native Modules',
+      rebuildScript,
+      ['Build Node.js Mobile Native Modules', 'Rebuild Node.js Native Modules']
+    );
+
+    // Add or update sign phase
+    addOrUpdateBuildPhase(
+      'Sign Node.js Mobile Native Modules',
+      signScript,
+      ['Sign Node.js Mobile Native Modules', 'Code Sign Node Native Modules', 'Code Sign Node.js Native Modules']
+    );
     console.log('iOS sync setup completed successfully.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
