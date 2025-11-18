@@ -129,6 +129,18 @@ function getNodeGypPath(projectRoot: string): string {
 }
 
 /**
+ * Get Node.js headers directory path relative to Xcode project
+ * Headers are at node_modules/capacitor-nodejs/ios/libnode/include/node
+ * From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/ios/libnode/include/node
+ */
+function getNodeHeadersPath(): string {
+  // Headers are in plugin's ios/libnode/include/node directory
+  // When installed, it's at node_modules/capacitor-nodejs/ios/libnode/include/node
+  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/ios/libnode/include/node
+  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'ios', 'libnode', 'include', 'node');
+}
+
+/**
  * Get rebuild shell script path relative to Xcode project
  */
 function getRebuildShellScriptPath(): string {
@@ -165,17 +177,28 @@ function escapeShellValue(value: string): string {
  * Create rebuild build phase script that sets environment variables and executes external script
  * The script points to the external .sh file instead of embedding content
  */
-function createRebuildBuildPhaseScript(rebuildScriptPathRel: string, nodeGypPath: string, nodeDir: string, shellScriptPath: string): string {
+function createRebuildBuildPhaseScript(rebuildScriptPath: string, nodeGypPath: string, nodeDir: string, nodeHeadersPath: string, shellScriptPath: string): string {
   // Create a script that sets environment variables and executes the external script file
-  // Escape paths to handle special characters
+  // Use $PROJECT_DIR to construct absolute path for REBUILD_SCRIPT_PATH since the rebuild script
+  // runs from $NODEJS_DIR/ and relative paths won't work from there
+  // Escape paths to handle special characters, but preserve ${PROJECT_DIR} variable
   const escapedNodeDir = escapeShellValue(nodeDir);
   const escapedNodeGypPath = escapeShellValue(nodeGypPath);
-  const escapedRebuildScriptPath = escapeShellValue(rebuildScriptPathRel);
+  // Don't escape rebuildScriptPath if it contains ${PROJECT_DIR} - let shell expand it
+  // Otherwise escape it normally
+  const escapedRebuildScriptPath = rebuildScriptPath.includes('${PROJECT_DIR}') 
+    ? rebuildScriptPath.replace(/"/g, '\\"')  // Only escape quotes, preserve ${PROJECT_DIR}
+    : escapeShellValue(rebuildScriptPath);
+  // Headers path uses ${PROJECT_DIR} for absolute path resolution
+  const escapedNodeHeadersPath = nodeHeadersPath.includes('${PROJECT_DIR}')
+    ? nodeHeadersPath.replace(/"/g, '\\"')  // Only escape quotes, preserve ${PROJECT_DIR}
+    : escapeShellValue(nodeHeadersPath);
   const escapedShellScriptPath = escapeShellValue(shellScriptPath);
   
   const script = `export NODE_DIR="${escapedNodeDir}"
 export NODEJS_MOBILE_GYP_BIN_FILE="${escapedNodeGypPath}"
 export REBUILD_SCRIPT_PATH="${escapedRebuildScriptPath}"
+export NODEJS_HEADERS_DIR="${escapedNodeHeadersPath}"
 sh "${escapedShellScriptPath}"`;
   return script;
 }
@@ -224,7 +247,10 @@ async function main(): Promise<void> {
 
     // Get Capacitor config
     const config = await findCapacitorConfig();
-    const rebuildScriptPathRel = getRebuildScriptPath();
+    // Get path for rebuild script using PROJECT_DIR (Xcode variable)
+    // The path is relative to PROJECT_DIR which points to the Xcode project directory
+    // Format: ${PROJECT_DIR}/../../node_modules/... (will be expanded by shell)
+    const rebuildScriptPathAbs = '${PROJECT_DIR}/../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js';
     const nodeGypPath = getNodeGypPath(projectRoot);
 
     // Load Xcode project using xcode package
@@ -266,16 +292,20 @@ async function main(): Promise<void> {
     const rebuildShellScriptPath = getRebuildShellScriptPath();
     const signShellScriptPath = getSignShellScriptPath();
 
+    // Get Node.js headers path (relative to Xcode project, using ${PROJECT_DIR} for absolute resolution)
+    const nodeHeadersPath = '${PROJECT_DIR}/../../node_modules/capacitor-nodejs/ios/libnode/include/node';
+
     // Create build phase scripts that set environment variables and execute external scripts
     // These scripts point to the external .sh files instead of embedding content
-    const rebuildScript = createRebuildBuildPhaseScript(rebuildScriptPathRel, nodeGypPath, nodeDir, rebuildShellScriptPath);
+    // Use absolute path for REBUILD_SCRIPT_PATH since the rebuild script runs from nodejs directory
+    const rebuildScript = createRebuildBuildPhaseScript(rebuildScriptPathAbs, nodeGypPath, nodeDir, nodeHeadersPath, rebuildShellScriptPath);
     const signScript = createSignBuildPhaseScript(nodeDir, pluginScriptsPath, signShellScriptPath);
 
     /**
      * Add or update a build phase with the given script
      */
     function addOrUpdateBuildPhase(phaseName: string, script: string, possibleNames: string[]): void {
-      let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
+    let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
       const phaseExists = possibleNames.some(name => pbxprojContent.includes(name));
 
       if (!phaseExists) {
@@ -291,8 +321,34 @@ async function main(): Promise<void> {
           }
         );
         writeFileSync(pbxprojFile, project.writeSync());
+        
+        // Fix the REBUILD_SCRIPT_PATH and NODEJS_HEADERS_DIR if it's the rebuild phase (xcode package may have modified them)
+        if (phaseName === 'Build Node.js Mobile Native Modules') {
+          pbxprojContent = readFileSync(pbxprojFile, 'utf8');
+          let fixedContent = pbxprojContent;
+          
+          // Fix REBUILD_SCRIPT_PATH: The xcode package writes it as: REBUILD_SCRIPT_PATH=\"../../node_modules/...\"
+          // We need to replace it with: REBUILD_SCRIPT_PATH=\"${PROJECT_DIR}/../../node_modules/...\"
+          fixedContent = fixedContent.replace(
+            'REBUILD_SCRIPT_PATH=\\"../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js\\"',
+            'REBUILD_SCRIPT_PATH=\\"${PROJECT_DIR}/../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js\\"'
+          );
+          
+          // Fix NODEJS_HEADERS_DIR: The xcode package may write it as: NODEJS_HEADERS_DIR=\"../../node_modules/...\"
+          // We need to replace it with: NODEJS_HEADERS_DIR=\"${PROJECT_DIR}/../../node_modules/...\"
+          fixedContent = fixedContent.replace(
+            'NODEJS_HEADERS_DIR=\\"../../node_modules/capacitor-nodejs/ios/libnode/include/node\\"',
+            'NODEJS_HEADERS_DIR=\\"${PROJECT_DIR}/../../node_modules/capacitor-nodejs/ios/libnode/include/node\\"'
+          );
+          
+          if (fixedContent !== pbxprojContent) {
+            writeFileSync(pbxprojFile, fixedContent);
+            pbxprojContent = fixedContent;
+          }
+        }
+        
         console.log(`Added build phase: ${phaseName}`);
-      } else {
+    } else {
         // Update existing build phase - find and replace the script content
         // Since the script is now short (just env vars + script call), we can use a simpler approach
         const escapedScript = JSON.stringify(script).slice(1, -1);
@@ -308,24 +364,38 @@ async function main(): Promise<void> {
         );
 
         const updatedContent = pbxprojContent.replace(updateRegex, (match, prefix, suffix) => {
-          return prefix + escapedScript + suffix;
-        });
+        return prefix + escapedScript + suffix;
+      });
 
-        if (updatedContent !== pbxprojContent) {
-          writeFileSync(pbxprojFile, updatedContent);
+      if (updatedContent !== pbxprojContent) {
+          // Fix REBUILD_SCRIPT_PATH and NODEJS_HEADERS_DIR if updating rebuild phase (before writing)
+          let finalContent = updatedContent;
+          if (phaseName === 'Build Node.js Mobile Native Modules') {
+            // Fix REBUILD_SCRIPT_PATH
+            finalContent = finalContent.replace(
+              'REBUILD_SCRIPT_PATH=\\"../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js\\"',
+              'REBUILD_SCRIPT_PATH=\\"${PROJECT_DIR}/../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-module.js\\"'
+            );
+            // Fix NODEJS_HEADERS_DIR
+            finalContent = finalContent.replace(
+              'NODEJS_HEADERS_DIR=\\"../../node_modules/capacitor-nodejs/ios/libnode/include/node\\"',
+              'NODEJS_HEADERS_DIR=\\"${PROJECT_DIR}/../../node_modules/capacitor-nodejs/ios/libnode/include/node\\"'
+            );
+          }
+          writeFileSync(pbxprojFile, finalContent);
           console.log(`Updated existing build phase: ${phaseName}`);
-        } else {
+      } else {
           // If regex didn't match, add a new phase
-          project.addBuildPhase(
-            [],
-            'PBXShellScriptBuildPhase',
+        project.addBuildPhase(
+          [],
+          'PBXShellScriptBuildPhase',
             phaseName,
-            target.uuid,
-            {
+          target.uuid,
+          {
               shellScript: script,
-              shellPath: '/bin/sh',
-            }
-          );
+            shellPath: '/bin/sh',
+          }
+        );
           writeFileSync(pbxprojFile, project.writeSync());
           console.log(`Added build phase (existing phase not found): ${phaseName}`);
         }

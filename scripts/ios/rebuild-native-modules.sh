@@ -53,14 +53,34 @@ find "$NODEJS_DIR/" -name ".bin" -type d -delete 2>/dev/null || true
 NODEJS_MOBILE_GYP_BIN_FILE="${NODEJS_MOBILE_GYP_BIN_FILE}"
 
 # Get the nodejs headers directory (libnode/include/node)
-# Try multiple possible paths
-NODEJS_HEADERS_DIR=""
-if [ -d "$PROJECT_DIR/../ios/libnode/include/node" ]; then
-  NODEJS_HEADERS_DIR="$( cd "$PROJECT_DIR" && cd ../ios/libnode/include/node && pwd )"
-elif [ -d "$PROJECT_DIR/../../ios/libnode/include/node" ]; then
-  NODEJS_HEADERS_DIR="$( cd "$PROJECT_DIR" && cd ../../ios/libnode/include/node && pwd )"
-elif [ -d "$( dirname "$PRODUCT_SETTINGS_PATH" )/Plugins/capacitor-nodejs/ios/libnode/include/node" ]; then
-  NODEJS_HEADERS_DIR="$( cd "$( dirname "$PRODUCT_SETTINGS_PATH" )" && cd Plugins/capacitor-nodejs/ios/libnode/include/node && pwd )"
+# Try multiple possible paths, starting with the plugin's node_modules directory
+NODEJS_HEADERS_DIR="${NODEJS_HEADERS_DIR:-}"
+if [ -z "$NODEJS_HEADERS_DIR" ]; then
+  # Try plugin's node_modules directory first (most common location)
+  if [ -d "$PROJECT_DIR/../../node_modules/capacitor-nodejs/ios/libnode/include/node" ]; then
+    NODEJS_HEADERS_DIR="$( cd "$PROJECT_DIR" && cd ../../node_modules/capacitor-nodejs/ios/libnode/include/node && pwd )"
+  # Try plugin's ios directory (development build)
+  elif [ -d "$PROJECT_DIR/../ios/libnode/include/node" ]; then
+    NODEJS_HEADERS_DIR="$( cd "$PROJECT_DIR" && cd ../ios/libnode/include/node && pwd )"
+  # Try project root's ios directory
+  elif [ -d "$PROJECT_DIR/../../ios/libnode/include/node" ]; then
+    NODEJS_HEADERS_DIR="$( cd "$PROJECT_DIR" && cd ../../ios/libnode/include/node && pwd )"
+  # Try Pods directory (CocoaPods installation)
+  elif [ -d "$( dirname "$PRODUCT_SETTINGS_PATH" )/Plugins/capacitor-nodejs/ios/libnode/include/node" ]; then
+    NODEJS_HEADERS_DIR="$( cd "$( dirname "$PRODUCT_SETTINGS_PATH" )" && cd Plugins/capacitor-nodejs/ios/libnode/include/node && pwd )"
+  fi
+fi
+
+# Warn if headers not found
+if [ -z "$NODEJS_HEADERS_DIR" ] || [ ! -d "$NODEJS_HEADERS_DIR" ]; then
+  echo "Warning: Node.js headers directory not found. Native module rebuild may fail."
+  echo "Expected headers at: libnode/include/node"
+  echo "Searched in:"
+  echo "  - $PROJECT_DIR/../../node_modules/capacitor-nodejs/ios/libnode/include/node"
+  echo "  - $PROJECT_DIR/../ios/libnode/include/node"
+  echo "  - $PROJECT_DIR/../../ios/libnode/include/node"
+  echo "  - $( dirname "$PRODUCT_SETTINGS_PATH" )/Plugins/capacitor-nodejs/ios/libnode/include/node"
+  echo "Set NODEJS_HEADERS_DIR environment variable to specify the correct path."
 fi
 
 # Adds the original project .bin to the path. It's a workaround
@@ -99,6 +119,7 @@ if [ -d "$NODE_MODULES_DIR" ]; then
       MODULE_NAME=$(basename "$MODULE_DIR")
       echo "Rebuilding native module: $MODULE_NAME ($MODULE_DIR) for $TARGET_ARCH"
       GYP_DEFINES="OS=ios" \
+      NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE" \
       npm_config_nodedir="$NODEJS_HEADERS_DIR" \
       npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
       npm_config_platform="ios" \
@@ -122,6 +143,7 @@ if [ -d "$NODE_MODULES_DIR" ]; then
       MODULE_NAME=$(basename "$MODULE_DIR")
       echo "Rebuilding native module: $MODULE_NAME ($MODULE_DIR) for $TARGET_ARCH"
       GYP_DEFINES="OS=ios" \
+      NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE" \
       npm_config_nodedir="$NODEJS_HEADERS_DIR" \
       npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
       npm_config_platform="ios" \
