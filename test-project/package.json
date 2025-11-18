@@ -4,6 +4,7 @@
   "description": "Test app for Capacitor NodeJS plugin",
   "type": "module",
   "main": "index.js",
+  "license": "MIT",
   "scripts": {
     "build": "vite build",
     "preview": "vite preview",
