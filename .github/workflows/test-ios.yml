@@ -22,11 +22,41 @@ jobs:
           yarn install
           yarn build
 
+      - name: Pack plugin
+        run: |
+          yarn pack
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          ARCHIVE_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz"
+          # Find the packed file (yarn pack creates it in the current directory)
+          PACKED_FILE=$(ls -1 *.tgz 2>/dev/null | grep -v bridge.tgz | grep "^${PACKAGE_NAME}-" | head -1)
+          if [ -z "$PACKED_FILE" ]; then
+            echo "Error: Could not find packed file"
+            ls -la *.tgz || echo "No .tgz files found"
+            exit 1
+          fi
+          echo "PACKED_FILE=$PACKED_FILE" >> $GITHUB_ENV
+          echo "Packed plugin: $PACKED_FILE"
+
       - name: Setup test project
         run: |
           cd test-project
-          # Create .npmrc to use local plugin
-          echo "capacitor-nodejs=file:.." > .npmrc
+          # Update package.json to use the packed tarball
+          # Get the packed file name from the parent directory (handle both with and without 'v' prefix)
+          PACKED_FILE=$(ls -1 ../*.tgz 2>/dev/null | grep -v bridge.tgz | grep "capacitor-nodejs" | head -1 | xargs basename)
+          if [ -z "$PACKED_FILE" ]; then
+            echo "Error: Could not find packed plugin tarball"
+            ls -la ../*.tgz || echo "No .tgz files found in parent directory"
+            exit 1
+          fi
+          PLUGIN_TARBALL="../$PACKED_FILE"
+          if [ ! -f "$PLUGIN_TARBALL" ]; then
+            echo "Error: Plugin tarball not found at $PLUGIN_TARBALL"
+            exit 1
+          fi
+          echo "Using plugin tarball: $PLUGIN_TARBALL"
+          # Use file: protocol with relative path
+          npm pkg set "dependencies.capacitor-nodejs=file:$PLUGIN_TARBALL"
           yarn install
 
       - name: Build web app
@@ -56,15 +86,6 @@ jobs:
           yarn cap sync ios
         env:
           CAPACITOR_PLATFORM_NAME: ios
-
-      - name: Install iOS dependencies
-        run: |
-          cd test-project/ios/App
-          if [ ! -d "Pods" ]; then
-            pod install
-          else
-            pod install --repo-update
-          fi
 
       - name: Build iOS app (simulator)
         run: |
@@ -122,18 +143,21 @@ jobs:
             echo "Found Node.js directory at: $NODEJS_DIR"
             
             # Check for rebuilt native modules
-            if [ -d "$NODEJS_DIR/node_modules/fsevents" ]; then
-              echo "✓ fsevents module found"
-              if [ -f "$NODEJS_DIR/node_modules/fsevents/fsevents.node" ] || [ -d "$NODEJS_DIR/node_modules/fsevents/build" ]; then
-                echo "✓ fsevents native module appears to be rebuilt"
+            if [ -d "$NODEJS_DIR/node_modules/better-sqlite3" ]; then
+              echo "✓ better-sqlite3 module found"
+              if [ -f "$NODEJS_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+                echo "✓ better-sqlite3 native module rebuilt successfully"
+                ls -lh "$NODEJS_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
               fi
             fi
             
-            # Check for custom native module
-            if [ -d "$NODEJS_DIR/build" ] || [ -d "$NODEJS_DIR/node_modules/test_native_module" ]; then
-              echo "✓ Custom native module build directory found"
-              if find "$NODEJS_DIR" -name "test_native_module.node" | grep -q .; then
-                echo "✓ Custom native module binary found"
+            if [ -d "$NODEJS_DIR/node_modules/bufferutil" ]; then
+              echo "✓ bufferutil module found"
+              if find "$NODEJS_DIR/node_modules/bufferutil" -path "*/build/Release/*.node" -o -path "*/build/Debug/*.node" | grep -q .; then
+                echo "✓ bufferutil native module rebuilt successfully"
+                find "$NODEJS_DIR/node_modules/bufferutil" -path "*/build/Release/*.node" -o -path "*/build/Debug/*.node" | head -1
+              else
+                echo "⚠ bufferutil may use prebuilds (check if iOS rebuild is needed)"
               fi
             fi
             
