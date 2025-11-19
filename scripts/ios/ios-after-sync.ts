@@ -170,9 +170,12 @@ function createRebuildBuildPhaseScript(nodeGypPath: string, nodeDir: string, nod
     : escapeShellValue(nodeHeadersPath);
   const escapedShellScriptPath = escapeShellValue(shellScriptPath);
   
+  // Add project's node_modules/.bin to PATH for packages like bufferutil that need node-gyp-build
+  // ${PROJECT_DIR} is an Xcode variable that will be expanded, so don't escape it
   const script = `export NODE_DIR="${escapedNodeDir}"
 export NODEJS_MOBILE_GYP_BIN_FILE="${escapedNodeGypPath}"
 export NODEJS_HEADERS_DIR="${escapedNodeHeadersPath}"
+export PATH="\${PROJECT_DIR}/../../node_modules/.bin:\$PATH"
 sh "${escapedShellScriptPath}"`;
   return script;
 }
