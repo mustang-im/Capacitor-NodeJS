@@ -38,7 +38,7 @@ function makeScriptsExecutable(): Plugin {
         );
 
         // Make shell scripts executable (copied by vite-plugin-static-copy)
-        const shellScripts = ['rebuild-native-modules.sh', 'sign-native-modules.sh'];
+        const shellScripts = ['sign-native-modules.sh'];
         const { access } = await import('node:fs/promises');
         await Promise.all(
           shellScripts.map(async (script) => {
@@ -75,6 +75,7 @@ const scriptInputs = {
   'ios-create-plists-and-dlopen-override': resolve(__dirname, 'ios/ios-create-plists-and-dlopen-override.ts'),
   'create-frameworks-and-override': resolve(__dirname, 'ios/create-frameworks-and-override.ts'),
   'override-dlopen-paths-preload': resolve(__dirname, 'ios/override-dlopen-paths-preload.ts'),
+  'rebuild-native-modules': resolve(__dirname, 'ios/rebuild-native-modules.ts'),
 };
 
 export default defineConfig({

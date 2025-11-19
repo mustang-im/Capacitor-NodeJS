@@ -114,6 +114,84 @@ find "$NODEJS_DIR/node_modules" -name "package.json" -type f | while read -r pkg
   fi
 done
 
+# Patch binding.gyp files to build as shared libraries (MH_DYLIB) instead of bundles (MH_BUNDLE)
+# This is what prebuild-for-nodejs-mobile does - sets product_type to "dynamic_library"
+find "$NODEJS_DIR/node_modules" -name "binding.gyp" -type f | while read -r bindinggyp; do
+  # Backup original if not already backed up
+  if [ ! -f "$bindinggyp.bak" ]; then
+    cp "$bindinggyp" "$bindinggyp.bak" 2>/dev/null || true
+  fi
+  # Use Python to properly parse and modify the GYP file
+  python3 << 'PYTHON_PATCH_GYP'
+import sys
+import re
+
+filepath = sys.argv[1] if len(sys.argv) > 1 else None
+
+if not filepath:
+    sys.exit(0)
+
+try:
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Check if product_type is already set to dynamic_library
+    if re.search(r"['\"]product_type['\"]\s*:\s*['\"]dynamic_library['\"]", content):
+        # Already correct, skip
+        sys.exit(0)
+
+    # Find all target definitions and add product_type to each
+    # GYP files use Python-like syntax with 'target_name': '...'
+    # We'll add product_type right after target_name line
+
+    lines = content.split('\n')
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        new_lines.append(line)
+
+        # Check if this line has target_name
+        if re.search(r"['\"]target_name['\"]", line):
+            # Check if next few lines already have product_type
+            has_product_type = False
+            indent_match = re.match(r'^(\s*)', line)
+            base_indent = indent_match.group(1) if indent_match else ''
+
+            # Look ahead to see if product_type already exists
+            for j in range(i+1, min(i+20, len(lines))):
+                next_line = lines[j]
+                if re.search(r"['\"]product_type['\"]", next_line):
+                    has_product_type = True
+                    break
+                # Stop if we hit a line that's not indented more (end of this target's properties)
+                next_indent_match = re.match(r'^(\s*)', next_line)
+                if next_indent_match:
+                    next_indent = next_indent_match.group(1)
+                    if next_line.strip() and len(next_indent) <= len(base_indent) and next_line.strip()[0] not in ['#', '/']:
+                        break
+
+            if not has_product_type:
+                # Add product_type after target_name line with same indentation
+                # Need to add proper indentation (usually 2 more spaces)
+                indent = base_indent + '  '
+                new_lines.append(f"{indent}'product_type': 'dynamic_library',")
+
+        i += 1
+
+    new_content = '\n'.join(new_lines)
+
+    # Only write if content changed
+    if new_content != content:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+except Exception:
+    # Silently fail if patching doesn't work
+    pass
+PYTHON_PATCH_GYP
+    "$bindinggyp" 2>/dev/null || true
+done
+
 # Also patch JavaScript files that require node-gyp-build to use node-gyp-build-mobile
 # This handles cases where packages load bindings at runtime
 find "$NODEJS_DIR/node_modules" -name "*.js" -type f | while read -r jsfile; do
@@ -212,36 +290,45 @@ PYTHON_CONVERT
 done
 
 # Rebuild modules with right environment
+# Following prebuild-for-nodejs-mobile pattern: set npm_config_* environment variables
+# These take precedence over package.json settings (npm 7+)
 pushd "$NODEJS_DIR/" > /dev/null
 
 if [ "$PLATFORM_NAME" == "iphoneos" ]; then
-  GYP_DEFINES="OS=ios iossim=0" \
-  NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_nodedir="$NODEJS_HEADERS_DIR" \
-  npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_platform="ios" \
-  npm_config_format="make-ios" \
-  npm_config_node_engine="chakracore" \
-  npm_config_arch="arm64" \
+  export GYP_DEFINES="OS=ios iossim=0"
+  export NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE"
+  export npm_config_nodedir="$NODEJS_HEADERS_DIR"
+  export npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE"
+  export npm_config_platform="ios"
+  export npm_config_format="make-ios"
+  export npm_config_node_engine="chakracore"
+  export npm_config_arch="arm64"
   npm --verbose rebuild --build-from-source
 else
-  GYP_DEFINES="OS=ios iossim=1" \
-  NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_nodedir="$NODEJS_HEADERS_DIR" \
-  npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_platform="ios" \
-  npm_config_format="make-ios" \
-  npm_config_node_engine="chakracore" \
-  npm_config_arch="x64" \
+  export GYP_DEFINES="OS=ios iossim=1"
+  export NODE_GYP="$NODEJS_MOBILE_GYP_BIN_FILE"
+  export npm_config_nodedir="$NODEJS_HEADERS_DIR"
+  export npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE"
+  export npm_config_platform="ios"
+  export npm_config_format="make-ios"
+  export npm_config_node_engine="chakracore"
+  export npm_config_arch="x64"
   npm --verbose rebuild --build-from-source
 fi
 
 popd > /dev/null
 
-# Restore original package.json files
+# Restore original package.json files AFTER conversion is complete
+# Keep them patched during the build process so install scripts use the correct tools
 find "$NODEJS_DIR/node_modules" -name "package.json.bak" -type f | while read -r bakfile; do
   pkgjson="${bakfile%.bak}"
   mv "$bakfile" "$pkgjson" 2>/dev/null || true
+done
+
+# Restore original binding.gyp files
+find "$NODEJS_DIR/node_modules" -name "binding.gyp.bak" -type f | while read -r bakfile; do
+  bindinggyp="${bakfile%.bak}"
+  mv "$bakfile" "$bindinggyp" 2>/dev/null || true
 done
 
 # Restore original JavaScript files

@@ -121,13 +121,13 @@ function getNodeGypPath(): string {
 }
 
 /**
- * Get rebuild shell script path relative to Xcode project
+ * Get rebuild script path relative to Xcode project (TypeScript compiled to JS)
  */
 function getRebuildShellScriptPath(): string {
-  // Script is in scripts/dist/rebuild-native-modules.sh
-  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.sh
-  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.sh
-  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'rebuild-native-modules.sh');
+  // Script is in scripts/dist/rebuild-native-modules.js (TypeScript compiled)
+  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.js
+  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/rebuild-native-modules.js
+  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'rebuild-native-modules.js');
 }
 
 /**
@@ -177,7 +177,7 @@ function createRebuildBuildPhaseScript(nodeGypPath: string, nodeDir: string, nod
 export NODEJS_MOBILE_GYP_BIN_FILE="${escapedNodeGypPath}"
 export NODEJS_HEADERS_DIR="${escapedNodeHeadersPath}"
 export PATH="\${PROJECT_DIR}/../../node_modules/capacitor-nodejs/node_modules/.bin:\$PATH"
-sh "${escapedShellScriptPath}"`;
+node "${escapedShellScriptPath}"`;
   return script;
 }
 
@@ -280,7 +280,7 @@ async function main(): Promise<void> {
      * Add or update a build phase with the given script
      */
     function addOrUpdateBuildPhase(phaseName: string, script: string, possibleNames: string[]): void {
-    let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
+      let pbxprojContent = readFileSync(pbxprojFile, 'utf8');
       const phaseExists = possibleNames.some(name => pbxprojContent.includes(name));
 
       if (!phaseExists) {
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
         );
         writeFileSync(pbxprojFile, project.writeSync());
         console.log(`Added build phase: ${phaseName}`);
-    } else {
+      } else {
         // Update existing build phase - find and replace the script content
         // Since the script is now short (just env vars + script call), we can use a simpler approach
         const escapedScript = JSON.stringify(script).slice(1, -1);
@@ -313,10 +313,10 @@ async function main(): Promise<void> {
         );
 
         const updatedContent = pbxprojContent.replace(updateRegex, (match, prefix, suffix) => {
-        return prefix + escapedScript + suffix;
-      });
+          return prefix + escapedScript + suffix;
+        });
 
-      if (updatedContent !== pbxprojContent) {
+        if (updatedContent !== pbxprojContent) {
           // Fix NODEJS_HEADERS_DIR if updating rebuild phase
           let finalContent = updatedContent;
           if (phaseName === 'Build Node.js Mobile Native Modules') {
@@ -328,18 +328,18 @@ async function main(): Promise<void> {
           }
           writeFileSync(pbxprojFile, finalContent);
           console.log(`Updated existing build phase: ${phaseName}`);
-      } else {
+        } else {
           // If regex didn't match, add a new phase
-        project.addBuildPhase(
-          [],
-          'PBXShellScriptBuildPhase',
+          project.addBuildPhase(
+            [],
+            'PBXShellScriptBuildPhase',
             phaseName,
-          target.uuid,
-          {
+            target.uuid,
+            {
               shellScript: script,
-            shellPath: '/bin/sh',
-          }
-        );
+              shellPath: '/bin/sh',
+            }
+          );
           writeFileSync(pbxprojFile, project.writeSync());
           console.log(`Added build phase (existing phase not found): ${phaseName}`);
         }
@@ -376,3 +376,4 @@ main().catch((error) => {
   console.error(`Unhandled error: ${message}`);
   process.exit(1);
 });
+
