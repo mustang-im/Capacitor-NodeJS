@@ -48,7 +48,7 @@ async function createFramework(
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>${frameworkName}</string>
+  <string>${binaryName}</string>
   <key>CFBundleIdentifier</key>
   <string>com.nodejs.${frameworkName}</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -92,7 +92,7 @@ async function findAndCreateFrameworks(nodejsDir: string): Promise<FrameworkInfo
           .map(async (moduleEntry) => {
             const modulePath = join(nodeModulesPath, moduleEntry.name);
             const buildReleasePath = join(modulePath, 'build', 'Release');
-            
+
             if (!existsSync(buildReleasePath)) {
               return [];
             }
@@ -232,11 +232,11 @@ function createOverrideJson(frameworks: FrameworkInfo[]): string {
     // originalRelativePath is like "build/Release/better_sqlite3.node" or "prebuilds/ios-arm64/bufferutil.node"
     // Split into path parts
     const originalParts = fw.originalRelativePath.split('/').filter(Boolean);
-    
+
     // newpath is relative to nodejsDir, pointing to the framework binary
     // Framework is at ../../Frameworks/<frameworkName>/<binaryName>
     const newParts = ['..', '..', 'Frameworks', fw.frameworkName, fw.frameworkName.replace('.framework', '')];
-    
+
     return {
       originalpath: originalParts,
       newpath: newParts,
