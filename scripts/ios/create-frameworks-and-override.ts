@@ -27,6 +27,23 @@ async function createFramework(
   originalRelativePath: string,
   nodejsDir: string
 ): Promise<FrameworkInfo | null> {
+  // Validate that binaryPath exists and is a valid file
+  if (!existsSync(binaryPath)) {
+    console.warn(`Warning: Binary path does not exist: ${binaryPath}`);
+    return null;
+  }
+
+  const binaryStat = await stat(binaryPath);
+  if (!binaryStat.isFile()) {
+    console.warn(`Warning: Binary path is not a file: ${binaryPath}`);
+    return null;
+  }
+
+  if (binaryStat.size === 0) {
+    console.warn(`Warning: Binary file is empty: ${binaryPath}`);
+    return null;
+  }
+
   // Generate hash-based framework name (like original script)
   // Hash is based on the original relative path
   const hash = createHash('sha1').update(originalRelativePath).digest('hex').substring(0, 40);
@@ -62,7 +79,7 @@ async function createFramework(
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>MinimumOSVersion</key>
-  <string>12.0</string>
+  <string>14.0</string>
 </dict>
 </plist>`;
 
