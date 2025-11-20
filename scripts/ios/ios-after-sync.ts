@@ -131,13 +131,13 @@ function getRebuildShellScriptPath(): string {
 }
 
 /**
- * Get sign shell script path relative to Xcode project
+ * Get sign script path relative to Xcode project (TypeScript compiled to JS)
  */
-function getSignShellScriptPath(): string {
-  // Script is in scripts/dist/sign-native-modules.sh
-  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.sh
-  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.sh
-  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'sign-native-modules.sh');
+function getSignScriptPath(): string {
+  // Script is in scripts/dist/sign-native-modules.js (TypeScript compiled)
+  // When installed, it's at node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.js
+  // From Xcode project (ios/App/App.xcodeproj), relative path is: ../../node_modules/capacitor-nodejs/scripts/dist/sign-native-modules.js
+  return join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist', 'sign-native-modules.js');
 }
 
 /**
@@ -183,18 +183,18 @@ node "${escapedShellScriptPath}"`;
 
 /**
  * Create sign build phase script that sets environment variables and executes external script
- * The script points to the external .sh file instead of embedding content
+ * The script points to the external .js file instead of embedding content
  */
-function createSignBuildPhaseScript(nodeDir: string, pluginScriptsPath: string, shellScriptPath: string): string {
+function createSignBuildPhaseScript(nodeDir: string, pluginScriptsPath: string, scriptPath: string): string {
   // Create a script that sets environment variables and executes the external script file
   // Escape paths to handle special characters
   const escapedNodeDir = escapeShellValue(nodeDir);
   const escapedPluginScriptsPath = escapeShellValue(pluginScriptsPath);
-  const escapedShellScriptPath = escapeShellValue(shellScriptPath);
+  const escapedScriptPath = escapeShellValue(scriptPath);
 
   const script = `export NODE_DIR="${escapedNodeDir}"
 export PLUGIN_SCRIPTS_PATH="${escapedPluginScriptsPath}"
-sh "${escapedShellScriptPath}"`;
+node "${escapedScriptPath}"`;
   return script;
 }
 
@@ -264,17 +264,17 @@ async function main(): Promise<void> {
     // Get plugin scripts path (relative to Xcode project)
     const pluginScriptsPath = join('..', '..', 'node_modules', 'capacitor-nodejs', 'scripts', 'dist');
 
-    // Get shell script paths (relative to Xcode project)
+    // Get script paths (relative to Xcode project)
     const rebuildShellScriptPath = getRebuildShellScriptPath();
-    const signShellScriptPath = getSignShellScriptPath();
+    const signScriptPath = getSignScriptPath();
 
     // Get Node.js headers path (nodejs-mobile-gyp expects libnode directory, not include/node)
     const nodeHeadersPath = '${PROJECT_DIR}/../../node_modules/capacitor-nodejs/ios/libnode';
 
     // Create build phase scripts that set environment variables and execute external scripts
-    // These scripts point to the external .sh files instead of embedding content
+    // These scripts point to the external .js files instead of embedding content
     const rebuildScript = createRebuildBuildPhaseScript(nodeGypPath, nodeDir, nodeHeadersPath, rebuildShellScriptPath);
-    const signScript = createSignBuildPhaseScript(nodeDir, pluginScriptsPath, signShellScriptPath);
+    const signScript = createSignBuildPhaseScript(nodeDir, pluginScriptsPath, signScriptPath);
 
     /**
      * Add or update a build phase with the given script
