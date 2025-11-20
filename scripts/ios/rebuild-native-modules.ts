@@ -4,9 +4,10 @@
  * rebuilds the modules, and converts bundles to shared libraries.
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync, statSync, readdirSync, mkdirSync, cpSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { execSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 // Get environment variables from Xcode
 const NODE_DIR = process.env.NODE_DIR || 'nodejs';
@@ -264,10 +265,23 @@ async function main() {
     headersDir = join(PROJECT_DIR, '../../node_modules/capacitor-nodejs/ios/libnode');
   }
 
-  // Find and patch package.json files
+  // Build in a temporary directory to avoid permission errors in read-only app bundle
+  const tempBuildDir = join(tmpdir(), `nodejs-rebuild-${Date.now()}`);
+  const tempNodeModules = join(tempBuildDir, 'node_modules');
+
+  // Copy node_modules to temp directory first
+  console.log(`Copying node_modules to temporary build directory: ${tempBuildDir}`);
+  if (!existsSync(join(NODEJS_DIR, 'node_modules'))) {
+    console.warn('No node_modules found in NODEJS_DIR, skipping rebuild');
+    return;
+  }
+  mkdirSync(tempBuildDir, { recursive: true });
+  cpSync(join(NODEJS_DIR, 'node_modules'), tempNodeModules, { recursive: true });
+
+  // Find and patch package.json files in temp directory
   console.log('Patching package.json files...');
   try {
-    const pkgJsonFiles = execSync(`find "${NODEJS_DIR}/node_modules" -name "package.json" -type f 2>/dev/null`, { encoding: 'utf8' });
+    const pkgJsonFiles = execSync(`find "${tempNodeModules}" -name "package.json" -type f 2>/dev/null`, { encoding: 'utf8' });
     for (const pkgJson of pkgJsonFiles.trim().split('\n').filter(f => f)) {
       patchPackageJson(pkgJson, NODEJS_MOBILE_GYP_BIN_FILE);
     }
@@ -275,10 +289,10 @@ async function main() {
     // Ignore errors
   }
 
-  // Find and patch binding.gyp files
+  // Find and patch binding.gyp files in temp directory
   console.log('Patching binding.gyp files...');
   try {
-    const bindingGypFiles = execSync(`find "${NODEJS_DIR}/node_modules" -name "binding.gyp" -type f 2>/dev/null`, { encoding: 'utf8' });
+    const bindingGypFiles = execSync(`find "${tempNodeModules}" -name "binding.gyp" -type f 2>/dev/null`, { encoding: 'utf8' });
     for (const bindingGyp of bindingGypFiles.trim().split('\n').filter(f => f)) {
       patchBindingGyp(bindingGyp);
     }
@@ -286,10 +300,10 @@ async function main() {
     // Ignore errors
   }
 
-  // Find and patch JavaScript files
+  // Find and patch JavaScript files in temp directory
   console.log('Patching JavaScript files...');
   try {
-    const jsFiles = execSync(`find "${NODEJS_DIR}/node_modules" -name "*.js" -type f 2>/dev/null`, { encoding: 'utf8' });
+    const jsFiles = execSync(`find "${tempNodeModules}" -name "*.js" -type f 2>/dev/null`, { encoding: 'utf8' });
     for (const jsFile of jsFiles.trim().split('\n').filter(f => f && !f.includes('/.bin/') && !f.endsWith('.bak'))) {
       patchJavaScript(jsFile);
     }
@@ -298,13 +312,12 @@ async function main() {
   }
 
   // Rebuild modules
-  console.log('Rebuilding native modules...');
+  console.log('Rebuilding native modules in temporary directory...');
   const env: Record<string, string> = {
     ...process.env,
     GYP_DEFINES: PLATFORM_NAME === 'iphoneos' ? 'OS=ios iossim=0' : 'OS=ios iossim=1',
-    NODE_GYP: NODEJS_MOBILE_GYP_BIN_FILE,
+    // Don't set NODEJS_MOBILE_GYP - let node-gyp-build-mobile use regular node-gyp
     npm_config_nodedir: headersDir,
-    npm_config_node_gyp: NODEJS_MOBILE_GYP_BIN_FILE,
     npm_config_platform: 'ios',
     npm_config_format: 'make-ios',
     npm_config_node_engine: 'chakracore',
@@ -313,20 +326,78 @@ async function main() {
 
   // Add node-gyp-build-mobile to PATH
   if (PROJECT_DIR) {
+    const projectBin = join(PROJECT_DIR, '../../node_modules/.bin');
     const pluginBin = join(PROJECT_DIR, '../../node_modules/capacitor-nodejs/node_modules/.bin');
+    const pathParts: string[] = [];
+    if (existsSync(projectBin)) {
+      pathParts.push(projectBin);
+    }
     if (existsSync(pluginBin)) {
-      env.PATH = `${pluginBin}:${env.PATH || ''}`;
+      pathParts.push(pluginBin);
+    }
+    if (pathParts.length > 0) {
+      env.PATH = `${pathParts.join(':')}:${env.PATH || ''}`;
     }
   }
 
   try {
+    // Build in temp directory
     execSync('npm --verbose rebuild --build-from-source', {
-      cwd: NODEJS_DIR,
+      cwd: tempBuildDir,
       env,
       stdio: 'inherit',
     });
+
+    // Copy built .node files back to app bundle
+    console.log('Copying built .node files back to app bundle...');
+    try {
+      const builtFiles = execSync(`find "${tempNodeModules}" -path "*/build/Release/*.node" -type f 2>/dev/null`, { encoding: 'utf8' });
+      for (const builtFile of builtFiles.trim().split('\n').filter(f => f)) {
+        // Get relative path from tempNodeModules
+        const relativePath = builtFile.replace(tempNodeModules + '/', '');
+        const targetPath = join(NODEJS_DIR, 'node_modules', relativePath);
+        const targetDir = dirname(targetPath);
+
+        // Create target directory if needed (should already exist, but be safe)
+        try {
+          mkdirSync(targetDir, { recursive: true });
+          copyFileSync(builtFile, targetPath);
+        } catch (copyError) {
+          console.warn(`Failed to copy ${builtFile} to ${targetPath}:`, copyError);
+        }
+      }
+
+      // Also handle .node directories
+      const builtDirs = execSync(`find "${tempNodeModules}" -path "*/build/Release/*.node" -type d 2>/dev/null`, { encoding: 'utf8' });
+      for (const builtDir of builtDirs.trim().split('\n').filter(f => f)) {
+        const relativePath = builtDir.replace(tempNodeModules + '/', '');
+        const targetPath = join(NODEJS_DIR, 'node_modules', relativePath);
+
+        try {
+          mkdirSync(dirname(targetPath), { recursive: true });
+          cpSync(builtDir, targetPath, { recursive: true });
+        } catch (copyError) {
+          console.warn(`Failed to copy directory ${builtDir} to ${targetPath}:`, copyError);
+        }
+      }
+    } catch (copyError) {
+      console.warn('Failed to copy built files:', copyError);
+    }
+
+    // Clean up temp directory
+    try {
+      execSync(`rm -rf "${tempBuildDir}"`, { stdio: 'ignore' });
+    } catch {
+      // Ignore cleanup errors
+    }
   } catch (error) {
     console.error('Failed to rebuild native modules:', error);
+    // Clean up temp directory on error
+    try {
+      execSync(`rm -rf "${tempBuildDir}"`, { stdio: 'ignore' });
+    } catch {
+      // Ignore cleanup errors
+    }
     // Continue anyway
   }
 
