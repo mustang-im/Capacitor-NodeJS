@@ -51,7 +51,7 @@
     "pack:bridge": "cd assets/types/bridge && npm pack --pack-destination ../ && mv ../types-bridge-*.tgz ../bridge.tgz",
     "pack": "npm run pack:bridge && npm pack",
     "prepublishOnly": "npm run build",
-    "cap:sync:before": "bash scripts/common/setup-libnode.sh --platform $CAPACITOR_PLATFORM_NAME --force $FORCE_LIBNODE_DOWNLOAD"
+    "capacitor:sync:before": "bash scripts/common/setup-libnode.sh"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
