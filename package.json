@@ -15,7 +15,8 @@
     "dist/",
     "ios/Plugin/",
     "electron/",
-    "CapacitorNodejs.podspec"
+    "CapacitorNodejs.podspec",
+    "scripts"
   ],
   "author": "Rene Hampölz",
   "license": "MIT",
