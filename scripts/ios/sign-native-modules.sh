@@ -1,30 +1,27 @@
 #!/bin/bash
 # sign-native-modules.sh
-# Sign phase script to sign Node.js native modules for iOS
+# Sign Node.js native modules for iOS using process_frameworks.py
 
 set -e
 
-PROJECT_ROOT="$PROJECT_DIR/../.."   # adjust if needed
+PROJECT_ROOT="$PROJECT_DIR/../.."
 
-CONFIG_JSON=$(node -e "$CONFIG_JS")
-NODE_DIR=$(echo "$CONFIG_JSON" | jq -r '.nodeDir')
+# Determine Node.js project path
+ASSETS_PATH="$(dirname "$PRODUCT_SETTINGS_PATH")"
+NODE_PROJECT=$(jq -r '.plugins.CapacitorNodeJS.nodeDir' "$ASSETS_PATH/capacitor.config.json")
+NODE_PROJECT_PATH="$CODESIGNING_FOLDER_PATH/public/$NODE_PROJECT"
 
-NODEJS_PATH="$CODESIGNING_FOLDER_PATH/public/$NODE_DIR"
-
+# Determine if native modules were built
 if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
-# If build native modules preference is not set, look for it in the project's
-# public/NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt
   PREFERENCE_FILE_PATH="$CODESIGNING_FOLDER_PATH/public/NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt"
   if [ -f "$PREFERENCE_FILE_PATH" ]; then
-    NODEJS_MOBILE_BUILD_NATIVE_MODULES="$(cat $PREFERENCE_FILE_PATH | xargs)"
-    # Remove the preference file so it doesn't get in the application package.
+    NODEJS_MOBILE_BUILD_NATIVE_MODULES="$(cat "$PREFERENCE_FILE_PATH" | xargs)"
     rm "$PREFERENCE_FILE_PATH"
   fi
 fi
+
 if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
-# If build native modules preference is not set, try to find .gyp files
-#to turn it on.
-  gypfiles=($(find "$NODEJS_PATH" -type f -name "*.gyp"))
+  gypfiles=($(find "$NODE_PROJECT_PATH/node_modules" -type f -name "*.gyp"))
   if [ ${#gypfiles[@]} -gt 0 ]; then
     NODEJS_MOBILE_BUILD_NATIVE_MODULES=1
   else
@@ -32,28 +29,44 @@ if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
   fi
 fi
 
-if [ "1" != "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then exit 0; fi
-# Delete object files
-find "$NODEJS_PATH" -name "*.o" -type f -delete
-find "$NODEJS_PATH" -name "*.a" -type f -delete
-# Create Info.plist for each framework built and loader override.
-PATCH_SCRIPT_DIR="$( cd "$PROJECT_DIR" && cd ../../node_modules/capacitor-nodejs/scripts/ios/ && pwd )"
-NODEJS_PROJECT_DIR="$( cd "$NODEJS_PATH" && pwd )"
-python "$PATCH_SCRIPT_DIR/process_frameworks.py" $NODEJS_PROJECT_DIR
-# Embed every resulting .framework in the application and delete them afterwards.
-embed_framework()
-{
-    FRAMEWORK_NAME="$(basename "$1")"
-    mkdir -p "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/"
-    cp -r "$1" "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/"
-    /usr/bin/codesign --force --sign $EXPANDED_CODE_SIGN_IDENTITY --preserve-metadata=identifier,entitlements,flags --timestamp=none "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$FRAMEWORK_NAME"
-}
-find "$NODEJS_PATH" -name "*.framework" -type d | while read frmwrk_path; do embed_framework "$frmwrk_path"; done
+if [ "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" != "1" ]; then
+  echo "No native modules to sign. Exiting."
+  exit 0
+fi
 
-#Delete gyp temporary .deps dependency folders from the project structure.
-find "$NODEJS_PATH" -path "*/.deps/*" -delete
-find "$NODEJS_PATH" -name ".deps" -type d -delete
+echo "Cleaning old frameworks..."
+find "$NODE_PROJECT_PATH" -name "*.framework" -type d -exec rm -rf {} +
 
-#Delete frameworks from their build paths
-find "$NODEJS_PATH" -path "*/*.framework/*" -delete
-find "$NODEJS_PATH" -name "*.framework" -type d -delete
+# Locate the patching Python script
+PATCH_SCRIPT_DIR="$(cd "$PROJECT_DIR" && cd ../../node_modules/capacitor-nodejs/scripts/ios/ && pwd)"
+
+# Ensure python3 is available
+if ! command -v python3 &>/dev/null; then
+  echo "python3 not found. Please install Python 3."
+  exit 1
+fi
+
+echo "Generating frameworks from .node binaries..."
+python3 "$PATCH_SCRIPT_DIR/process_frameworks.py" "$NODE_PROJECT_PATH"
+
+echo "Embedding and signing frameworks..."
+FRAMEWORKS=$(find "$NODE_PROJECT_PATH" -type d -name "*.framework")
+
+if [ -z "$FRAMEWORKS" ]; then
+  echo "No frameworks were generated."
+  exit 0
+fi
+
+mkdir -p "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH"
+
+for fw in $FRAMEWORKS; do
+  FRAMEWORK_NAME=$(basename "$fw")
+  echo "Embedding $FRAMEWORK_NAME..."
+  cp -R "$fw" "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/"
+  /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
+    --preserve-metadata=identifier,entitlements,flags --timestamp=none \
+    "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$FRAMEWORK_NAME"
+done
+
+find "$NODE_PROJECT_PATH" -type d -name "*.node" -exec rm -rf {} +
+echo "Native modules signing completed."
