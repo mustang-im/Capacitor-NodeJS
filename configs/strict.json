@@ -12,6 +12,7 @@
         "noUnusedParameters": true,
         "forceConsistentCasingInFileNames": true,
         "checkJs": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "types": ["minimatch"]
     }
 }
