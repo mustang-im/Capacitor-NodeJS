@@ -16,6 +16,7 @@
         "noEmitHelpers": true,
 
         "pretty": true,
+        "skipLibCheck": true
     },
     "files": [
         "src/index.ts"

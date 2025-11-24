@@ -12,6 +12,8 @@
     "inlineSources": true,
     "outDir": "dist/esm",
 
+    "skipLibCheck": true,
+
     "pretty": true,
   },
   "files": ["src/index.ts"]
