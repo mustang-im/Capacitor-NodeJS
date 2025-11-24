@@ -6,11 +6,16 @@ set -e
 
 PROJECT_ROOT="$PROJECT_DIR/../.."   # adjust if needed
 
-CONFIG_JSON=$(node -e "$CONFIG_JS")
-NODE_DIR=$(echo "$CONFIG_JSON" | jq -r '.nodeDir')
+# Source nvm if HOME is defined
+if [ -n "${HOME:-}" ]; then
+  source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+fi
 
-NODEJS_PATH="$CODESIGNING_FOLDER_PATH/public/$NODE_DIR"
+ASSETS_PATH="$(dirname "$PRODUCT_SETTINGS_PATH")"
+NODE_PROJECT=$(jq -r '.plugins.CapacitorNodeJS.nodeDir' "$ASSETS_PATH/capacitor.config.json")
+NODE_PROJECT_PATH="$CODESIGNING_FOLDER_PATH/public/$NODE_PROJECT"
 
+# Determine if we need to rebuild native modules
 if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
   PREFERENCE_FILE_PATH="$CODESIGNING_FOLDER_PATH/public/NODEJS_MOBILE_BUILD_NATIVE_MODULES_VALUE.txt"
   if [ -f "$PREFERENCE_FILE_PATH" ]; then
@@ -19,7 +24,7 @@ if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
 fi
 
 if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
-  gypfiles=($(find "$NODEJS_PATH" -type f -name "*.gyp"))
+  gypfiles=($(find "$NODE_PROJECT_PATH/node_modules" -type f -name "*.gyp"))
   if [ ${#gypfiles[@]} -gt 0 ]; then
     NODEJS_MOBILE_BUILD_NATIVE_MODULES=1
   else
@@ -28,61 +33,59 @@ if [ -z "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
 fi
 
 if [ "1" != "$NODEJS_MOBILE_BUILD_NATIVE_MODULES" ]; then
+  echo "Skipping native module rebuild."
   exit 0
 fi
 
-# Delete object files that may already come from within the npm package
-find "$NODEJS_PATH" -name "*.o" -type f -delete
-find "$NODEJS_PATH" -name "*.a" -type f -delete
-find "$NODEJS_PATH" -name "*.node" -type f -delete
+echo "Cleaning old object files..."
+find "$NODE_PROJECT_PATH" -name "*.o" -type f -delete
+find "$NODE_PROJECT_PATH" -name "*.a" -type f -delete
+find "$NODE_PROJECT_PATH" -name "*.node" -type f -delete
+find "$NODE_PROJECT_PATH" -path "*/*.node/*" -delete
+find "$NODE_PROJECT_PATH" -name "*.framework" -type d -delete
+find "$NODE_PROJECT_PATH" -path "*/*.framework/*" -delete
+find "$NODE_PROJECT_PATH" -path "*/.bin/*" -delete
+find "$NODE_PROJECT_PATH" -name ".bin" -type d -delete
 
-# Delete bundle contents that may be there from previous builds
-find "$NODEJS_PATH" -path "*/*.node/*" -delete
-find "$NODEJS_PATH" -name "*.node" -type d -delete
-find "$NODEJS_PATH" -path "*/*.framework/*" -delete
-find "$NODEJS_PATH" -name "*.framework" -type d -delete
-
-# Symlinks to binaries are resolved by cordova prepare during the copy
-find "$NODEJS_PATH" -path "*/.bin/*" -delete
-find "$NODEJS_PATH" -name ".bin" -type d -delete
-
-# Get the nodejs-mobile-gyp location
-if [ -d "$PROJECT_DIR/../../node_modules/capacitor-nodejs/node_modules/nodejs-mobile-gyp/" ]; then
-  NODEJS_MOBILE_GYP_DIR="$(cd "$PROJECT_DIR" && cd ../../node_modules/capacitor-nodejs/node_modules/nodejs-mobile-gyp/ && pwd)"
-elseif [ -d "$PROJECT_DIR/../../node_modules/nodejs-mobile-gyp/" ]; then
-  NODEJS_MOBILE_GYP_DIR="$(cd "$PROJECT_DIR" && cd ../../node_modules/nodejs-mobile-gyp/ && pwd)"
+# Locate nodejs-mobile-gyp
+if [ -d "$PROJECT_ROOT/node_modules/nodejs-mobile-gyp/" ]; then
+  NODEJS_MOBILE_GYP_DIR="$(cd "$PROJECT_ROOT/node_modules/nodejs-mobile-gyp" && pwd)"
 else
   echo "nodejs-mobile-gyp not found"
   exit 1
 fi
 NODEJS_MOBILE_GYP_BIN_FILE="$NODEJS_MOBILE_GYP_DIR/bin/node-gyp.js"
 
-# Rebuild modules with right environment
-NODEJS_HEADERS_DIR="$(cd "$(dirname "$PRODUCT_SETTINGS_PATH")" && cd ../../node_modules/capacitor-nodejs/ios/libnode/ && pwd)"
+# Node.js headers for building
+NODEJS_HEADERS_DIR="$(cd $PROJECT_ROOT/node_modules/capacitor-nodejs/ios/libnode && pwd)"
 
-# Add original project .bin to PATH for modules that depend on symlinked modules
-if [ -d "$PROJECT_DIR/../../dist/nodejs/node_modules/.bin/" ]; then
-  PATH="$PROJECT_DIR/../../dist/nodejs/node_modules/.bin/:$PATH"
+# Add project .bin to PATH
+if [ -d "$PROJECT_ROOT/dist/nodejs/node_modules/.bin/" ]; then
+  PATH="$PROJECT_ROOT/dist/nodejs/node_modules/.bin/:$PATH"
 fi
 
-pushd "$NODEJS_PATH"
-
+# Set platform-specific flags
 if [ "$PLATFORM_NAME" == "iphoneos" ]; then
-  GYP_DEFINES="OS=ios" \
-  npm_config_nodedir="$NODEJS_HEADERS_DIR" \
-  npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_platform="ios" \
-  npm_config_format="make-ios" \
-  npm_config_arch="arm64" \
-  npm --verbose rebuild --build-from-source
+  TARGET_ARCH="arm64"
+  GYP_DEFINES="OS=ios PLATFORM=ios iossim=0 TARGET_ARCH=$TARGET_ARCH"
 else
-  GYP_DEFINES="OS=ios" \
-  npm_config_nodedir="$NODEJS_HEADERS_DIR" \
-  npm_config_node_gyp="$NODEJS_MOBILE_GYP_BIN_FILE" \
-  npm_config_platform="ios" \
-  npm_config_format="make-ios" \
-  npm_config_arch="x64" \
-  npm --verbose rebuild --build-from-source
+  TARGET_ARCH="x64"
+  GYP_DEFINES="OS=ios PLATFORM=ios iossim=1 TARGET_ARCH=$TARGET_ARCH"
 fi
 
-popd
+echo "Rebuilding native modules for platform: $PLATFORM_NAME, arch: $TARGET_ARCH"
+
+# Rebuild each native module individually
+for module in "$NODE_PROJECT_PATH/node_modules/"*/ ; do
+  if [ -f "$module/binding.gyp" ]; then
+    echo "Rebuilding native module: $module"
+    node "$NODEJS_MOBILE_GYP_BIN_FILE" rebuild \
+      --release \
+      --nodedir="$NODEJS_HEADERS_DIR" \
+      --arch="$TARGET_ARCH" \
+      --platform="ios" \
+      --directory="$module"
+  fi
+done
+
+echo "Native module rebuild completed."
