@@ -1,8 +1,6 @@
 #!/bin/bash
-# rebuild-native-modules.sh
 # Build phase script to rebuild Node.js native modules for iOS
 
-set -e
 
 PROJECT_ROOT="$PROJECT_DIR/../.."   # adjust if needed
 

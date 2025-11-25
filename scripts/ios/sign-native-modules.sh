@@ -1,5 +1,4 @@
 #!/bin/bash
-# sign-native-modules.sh
 # Sign Node.js native modules for iOS using process_frameworks.py
 
 set -e
