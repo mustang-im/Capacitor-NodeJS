@@ -67,5 +67,10 @@ for fw in $FRAMEWORKS; do
     "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/$FRAMEWORK_NAME"
 done
 
-find "$NODE_PROJECT_PATH" -type d -name "*.node" -exec rm -rf {} +
+echo "Cleaning up temporary build artifacts..."
+find "$NODE_PROJECT_PATH" -path "*/.deps/*" -delete
+find "$NODE_PROJECT_PATH" -name ".deps" -type d -delete
+find "$NODE_PROJECT_PATH" -path "*/*.framework/*" -delete
+find "$NODE_PROJECT_PATH" -name "*.framework" -type d -delete
+
 echo "Native modules signing completed."
