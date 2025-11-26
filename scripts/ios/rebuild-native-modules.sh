@@ -73,25 +73,9 @@ fi
 
 echo "Rebuilding native modules for platform: $PLATFORM_NAME, arch: $TARGET_ARCH"
 
-PATCH_SCRIPT="$PROJECT_ROOT/node_modules/capacitor-nodejs/scripts/ios/patch-binding-gyp.js"
-
-if [[ ! -f "$PATCH_SCRIPT" ]]; then
-    echo "Error: patch-binding-gyp.js not found at $PATCH_SCRIPT"
-    exit 1
-fi
-
 # Rebuild each native module individually
 for module in "$NODE_PROJECT_PATH/node_modules/"*/ ; do
   if [ -f "$module/binding.gyp" ]; then
-    echo "Patching binding.gyp for module: $module"
-    node "$PATCH_SCRIPT" "$module/binding.gyp"
-
-    # Patch package.json if it exists
-    if [ -f "$module/package.json" ]; then
-        echo "  - Patching package.json"
-        node "$PATCH_SCRIPT" "$module/package.json"
-    fi
-
     echo "Rebuilding native module: $module"
     node "$NODEJS_MOBILE_GYP_BIN_FILE" rebuild \
       --release \
