@@ -3,27 +3,23 @@ import os
 import json
 import hashlib
 import plistlib
-import subprocess
 from pathlib import Path
 from typing import List, Dict
 
-
-def is_dynamic_library(path: Path) -> bool:
-    # For iOS builds, consider all .node files valid
-    return path.suffix == ".node" and path.is_file()
-
-
-def find_node_binaries(base_path: Path):
-    """Find all .node files (or directories containing a single binary) to convert into frameworks."""
+def find_prebuild_outputs(base_path: Path):
+    """
+    Find all executables in the [module].node/[executable] structure created by prebuild.
+    """
     binaries = []
     for root, dirs, files in os.walk(base_path):
-        for filename in files:
-            if filename.endswith(".node"):
+        # Check if we are in a prebuild output directory (e.g., "module_name.node")
+        if Path(root).name.endswith('.node'):
+            # Find the executable file inside this directory
+            for filename in files:
                 full_path = Path(root) / filename
-                if is_dynamic_library(full_path):
+                if full_path.is_file(): # Ensure it's a file, not a directory
                     binaries.append(full_path)
-                else:
-                    print(f"Skipping {full_path}: not a dynamic library.")
+                    break # Assume only one executable per .node dir
     return binaries
 
 
@@ -69,39 +65,55 @@ def generate_binary_plist(output_path: Path, bundle_name: str, env: Dict[str, st
 
 
 def process_frameworks(project_path: Path):
-    binaries = find_node_binaries(project_path)
+    binaries = find_prebuild_outputs(project_path)
     if not binaries:
-        print("No valid .node binaries found.")
+        print("No valid prebuild outputs found.")
         return
 
     overrides = []
     preload_src = Path(__file__).parent / "override-dlopen-paths-preload.js"
 
-    for node_file in binaries:
-        rel_path = node_file.relative_to(project_path)
-        digest = sha1_hex(str(node_file))
+    for binary_path in binaries:
+        # The original module name is the parent of the .node directory
+        module_node_dir = binary_path.parent
+        module_name = module_node_dir.stem
+        print(f"Processing {module_name}...")
+
+        digest = sha1_hex(str(module_node_dir))
         new_name = f"node{digest}"
 
         # Create framework directory
-        new_framework_dir = node_file.parent / f"{new_name}.framework"
+        new_framework_dir = module_node_dir.parent / f"{new_name}.framework"
         new_framework_dir.mkdir(exist_ok=True)
 
-        # Move the .node file into the framework
+        # Move the binary into the framework
         new_bin_path = new_framework_dir / new_name
-        node_file.rename(new_bin_path)
+        binary_path.rename(new_bin_path)
 
         # Create Info.plist
         plist_path = new_framework_dir / "Info.plist"
         generate_binary_plist(plist_path, new_name, os.environ)
 
-        # JSON override entry
+        # --- FINAL, SIMPLE JSON OVERRIDE ENTRY ---
+        # 'originalpath' is the path to the original .node directory
+        # 'newpath' is the path to the new binary inside the framework
+        # Both are relative to the same root: the project's public directory.
+        
+        original_path_parts = list(module_node_dir.relative_to(project_path).parts)
+        new_path_parts = ["..", "..", "Frameworks", f"{new_name}.framework", new_name]
+
         overrides.append({
-            "originalpath": list(rel_path.parts),
-            "newpath": ["..", "..", "Frameworks", f"{new_name}.framework", new_name]
+            "originalpath": original_path_parts,
+            "newpath": new_path_parts
         })
 
-        # Leave empty file at old location
-        node_file.touch()
+        # Create an empty .node file at the original location
+        placeholder_file_path = module_node_dir / f"{module_node_dir.name}.node"
+        placeholder_file_path.touch()
+        print(f"  + Created placeholder at {placeholder_file_path}")
+
+        # Remove the now-empty .node directory
+        module_node_dir.rmdir()
 
     # Write override JSON
     json_path = project_path / "override-dlopen-paths-data.json"
@@ -111,7 +123,7 @@ def process_frameworks(project_path: Path):
     preload_dst = project_path / "override-dlopen-paths-preload.js"
     preload_dst.write_bytes(preload_src.read_bytes())
 
-    print(f"Processed {len(binaries)} .node binaries into frameworks.")
+    print(f"Processed {len(binaries)} prebuild outputs into frameworks.")
 
 
 if __name__ == "__main__":

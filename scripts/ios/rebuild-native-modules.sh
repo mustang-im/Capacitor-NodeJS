@@ -45,44 +45,25 @@ find "$NODE_PROJECT_PATH" -path "*/*.framework/*" -delete
 find "$NODE_PROJECT_PATH" -path "*/.bin/*" -delete
 find "$NODE_PROJECT_PATH" -name ".bin" -type d -delete
 
-# Locate nodejs-mobile-gyp
-if [ -d "$PROJECT_ROOT/node_modules/nodejs-mobile-gyp/" ]; then
-  NODEJS_MOBILE_GYP_DIR="$(cd "$PROJECT_ROOT/node_modules/nodejs-mobile-gyp" && pwd)"
-else
-  echo "nodejs-mobile-gyp not found"
-  exit 1
-fi
-NODEJS_MOBILE_GYP_BIN_FILE="$NODEJS_MOBILE_GYP_DIR/bin/node-gyp.js"
-
-# Node.js headers for building
-NODEJS_HEADERS_DIR="$(cd $PROJECT_ROOT/node_modules/capacitor-nodejs/ios/libnode && pwd)"
-
-# Add project .bin to PATH
-if [ -d "$PROJECT_ROOT/dist/nodejs/node_modules/.bin/" ]; then
-  PATH="$PROJECT_ROOT/dist/nodejs/node_modules/.bin/:$PATH"
-fi
-
-# Set platform-specific flags
-if [ "$PLATFORM_NAME" == "iphoneos" ]; then
-  TARGET_ARCH="arm64"
-  GYP_DEFINES="OS=ios PLATFORM=ios iossim=0 TARGET_ARCH=$TARGET_ARCH"
-else
-  TARGET_ARCH="x64"
-  GYP_DEFINES="OS=ios PLATFORM=ios iossim=1 TARGET_ARCH=$TARGET_ARCH"
-fi
+# Copy new libnode
+mkdir -p "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules/nodejs-mobile-react-native/ios"
+cp -rf "$PROJECT_ROOT/node_modules/capacitor-nodejs/ios/libnode" "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules/nodejs-mobile-react-native/ios"
 
 echo "Rebuilding native modules for platform: $PLATFORM_NAME, arch: $TARGET_ARCH"
+
+PREBUILD_SCRIPT="$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/bin.js"
 
 # Rebuild each native module individually
 for module in "$NODE_PROJECT_PATH/node_modules/"*/ ; do
   if [ -f "$module/binding.gyp" ]; then
     echo "Rebuilding native module: $module"
-    node "$NODEJS_MOBILE_GYP_BIN_FILE" rebuild \
-      --release \
-      --nodedir="$NODEJS_HEADERS_DIR" \
-      --arch="$TARGET_ARCH" \
-      --platform="ios" \
-      --directory="$module"
+    cd "$module"
+    # Set platform-specific flags
+    if [ "$PLATFORM_NAME" == "iphoneos" ]; then
+      node "$PREBUILD_SCRIPT" ios-arm64
+    else
+      node "$PREBUILD_SCRIPT" ios-arm64-simulator
+    fi
   fi
 done
 
