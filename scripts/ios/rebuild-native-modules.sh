@@ -46,12 +46,18 @@ find "$NODE_PROJECT_PATH" -path "*/.bin/*" -delete
 find "$NODE_PROJECT_PATH" -name ".bin" -type d -delete
 
 # Copy new libnode
-mkdir -p "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules/nodejs-mobile-react-native/ios"
-cp -rf "$PROJECT_ROOT/node_modules/capacitor-nodejs/ios/libnode" "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules/nodejs-mobile-react-native/ios"
+mkdir -p "$PROJECT_ROOT/node_modules/nodejs-mobile-react-native/ios"
+cp -rf "$PROJECT_ROOT/node_modules/capacitor-nodejs/ios/libnode" "$PROJECT_ROOT/node_modules/nodejs-mobile-react-native/ios"
+
+# Copy nodejs-mobile-gyp
+mkdir -p "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules"
+cp -rf "$PROJECT_ROOT/node_modules/nodejs-mobile-gyp" "$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/node_modules"
 
 echo "Rebuilding native modules for platform: $PLATFORM_NAME, arch: $TARGET_ARCH"
 
 PREBUILD_SCRIPT="$PROJECT_ROOT/node_modules/prebuild-for-nodejs-mobile/bin.js"
+
+export npm_config_python=$(which python3)
 
 # Rebuild each native module individually
 for module in "$NODE_PROJECT_PATH/node_modules/"*/ ; do
